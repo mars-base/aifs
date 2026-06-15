@@ -104,7 +104,13 @@ Examples:
 		}
 
 		if configAdd != "" {
-			cfg.Instances[configAdd] = *cfg.InstanceDefaults(configAdd)
+			inst := cfg.InstanceDefaults(configAdd)
+			password, err := generatePassword(16)
+			if err != nil {
+				return fmt.Errorf("failed to generate password: %w", err)
+			}
+			inst.Postgres.Password = password
+			cfg.Instances[configAdd] = *inst
 		}
 
 		if err := cfg.Save(path); err != nil {
@@ -138,6 +144,10 @@ var configValidateCmd = &cobra.Command{
 		}
 		rawCfg, err := config.Load(path)
 		if err != nil {
+			return err
+		}
+
+		if err := rawCfg.Validate(); err != nil {
 			return err
 		}
 

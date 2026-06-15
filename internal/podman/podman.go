@@ -3,6 +3,7 @@
 package podman
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -87,40 +88,50 @@ func (m *Manager) EnsureMachine() error {
 
 // ─── Image management ─────────────────────────────────────────────
 
-// EnsureImage builds the PostgreSQL + pgBackRest image.
+// EnsureImage ensures the PostgreSQL + pgBackRest image is available.
+// Tries podman pull first (for pre-built registry images), falls back to local build.
 func (m *Manager) EnsureImage() error {
-	exists, err := m.imageExists(m.cfg.Podman.ImageTag)
+	tag := m.cfg.Podman.ImageTag
+
+	exists, err := m.imageExists(tag)
 	if err != nil {
 		return err
 	}
 	if exists {
-		fmt.Printf("→ Image %s already exists, skipping build\n", m.cfg.Podman.ImageTag)
+		fmt.Printf("→ Image %s already exists, skipping pull/build\n", tag)
 		return nil
 	}
 
+	// Try pull first
+	fmt.Printf("→ Pulling image %s...\n", tag)
+	if _, err := m.run("pull", tag); err == nil {
+		fmt.Println("  ✓ Image pulled from registry")
+		return nil
+	}
+	fmt.Printf("  Pull failed, falling back to local build...\n")
+
+	// Fallback: build from embed Containerfile
+	return m.buildImage(tag)
+}
+
+// buildImage builds the PG image from embedded Containerfile and init.sh.
+func (m *Manager) buildImage(tag string) error {
 	fmt.Println("→ Building PostgreSQL + pgBackRest image...")
 
-	// Create temporary build directory
 	buildDir := filepath.Join(m.dataDir, "build")
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		return fmt.Errorf("creating build directory: %w", err)
 	}
 
-	// Writing Containerfile (from embed resources)
 	containerfile := filepath.Join(buildDir, "Containerfile")
 	if err := os.WriteFile(containerfile, []byte(res.Containerfile), 0644); err != nil {
 		return fmt.Errorf("writing Containerfile: %w", err)
 	}
-	// Writing init script
 	if err := os.WriteFile(filepath.Join(buildDir, "init.sh"), []byte(res.InitShell), 0644); err != nil {
 		return fmt.Errorf("writing init.sh: %w", err)
 	}
 
-	if err := m.runInteractive("build",
-		"-t", m.cfg.Podman.ImageTag,
-		"-f", containerfile,
-		buildDir,
-	); err != nil {
+	if err := m.runInteractive("build", "-t", tag, "-f", containerfile, buildDir); err != nil {
 		return fmt.Errorf("podman build: %w", err)
 	}
 
@@ -200,12 +211,8 @@ type ContainerStatus struct {
 
 // EnsureContainer ensures the PostgreSQL container is created and running.
 // Creates the container if it does not exist, starts it if stopped.
+// Caller is responsible for calling EnsureNetwork() first.
 func (m *Manager) EnsureContainer() error {
-	// Ensure shared network exists first
-	if err := m.EnsureNetwork(); err != nil {
-		return err
-	}
-
 	exists, err := m.containerExists(m.cfg.Podman.ContainerName)
 	if err != nil {
 		return err
@@ -234,8 +241,8 @@ func (m *Manager) StartContainer() error {
 	if _, err := m.run("start", m.cfg.Podman.ContainerName); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
-	// Wait for PostgreSQL to be ready
-	return m.waitForPG(30 * time.Second)
+	fmt.Println("  ✓ Container started (check readiness with: aifs status)")
+	return nil
 }
 
 // StopContainer stops the container.
@@ -293,8 +300,13 @@ func (m *Manager) Destroy() error {
 }
 
 // PGIsReady checks if PostgreSQL is accepting connections.
+// Each podman exec call uses a 10s timeout to prevent hanging if podman is unresponsive.
 func (m *Manager) PGIsReady() (bool, error) {
-	out, err := m.Exec("pg_isready", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	execArgs := append([]string{"exec", m.cfg.Podman.ContainerName}, "pg_isready", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database)
+	out, err := m.runCtx(ctx, execArgs...)
 	if err != nil {
 		return false, nil // pg_isready failed = not ready
 	}
@@ -306,6 +318,20 @@ func (m *Manager) PGIsReady() (bool, error) {
 func (m *Manager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("podman %s: %s", strings.Join(args, " "), string(exitErr.Stderr))
+		}
+		return "", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
+	}
+	return string(out), nil
+}
+
+// runCtx runs podman with a context. Use for exec calls that should not hang indefinitely.
+func (m *Manager) runCtx(ctx context.Context, args ...string) (string, error) {
+	slog.Debug("podman", "args", args)
+	cmd := exec.CommandContext(ctx, m.podman, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -376,7 +402,7 @@ func (m *Manager) createContainer() error {
 		"--name", m.cfg.Podman.ContainerName,
 		"--network", m.cfg.Podman.Network,
 		"-p", fmt.Sprintf("%d:5432", hostPort),
-		"-v", fmt.Sprintf("%s:/var/lib/postgresql/data", m.cfg.Podman.DataDir),
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", m.cfg.Podman.DataDir),
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", backupVol),
 		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", confPath),
 		"-v", fmt.Sprintf("%s:/var/lib/postgresql/wal-archive", m.cfg.Podman.WALDir),
@@ -389,7 +415,8 @@ func (m *Manager) createContainer() error {
 	if _, err := m.run(args...); err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
-	return m.waitForPG(60 * time.Second)
+	fmt.Println("  ✓ Container created, PostgreSQL is initializing (check with: aifs status)")
+	return nil
 }
 
 // writeInstancePgbackrestConf writes a per-instance pgbackrest.conf for the PG container.
@@ -410,17 +437,4 @@ log-level-console=info
 		return "", fmt.Errorf("writing %s: %w", confPath, err)
 	}
 	return confPath, nil
-}
-
-func (m *Manager) waitForPG(timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		ready, _ := m.PGIsReady()
-		if ready {
-			fmt.Println("  ✓ PostgreSQL is ready")
-			return nil
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("PostgreSQL startup timed out (%v)", timeout)
 }

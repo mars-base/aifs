@@ -37,7 +37,8 @@ func NewBackupManager(cfg *config.Config) (*BackupManager, error) {
 
 // ─── Image management ─────────────────────────────────────────────
 
-// EnsureBackupImage builds the shared pgbackrest backup image.
+// EnsureBackupImage ensures the shared pgbackrest backup image is available.
+// Tries podman pull first (for pre-built registry images), falls back to local build.
 func (m *BackupManager) EnsureBackupImage() error {
 	tag := m.cfg.Backup.ImageTag
 
@@ -46,10 +47,24 @@ func (m *BackupManager) EnsureBackupImage() error {
 		return err
 	}
 	if exists {
-		fmt.Printf("→ Backup image %s already exists, skipping build\n", tag)
+		fmt.Printf("→ Backup image %s already exists, skipping pull/build\n", tag)
 		return nil
 	}
 
+	// Try pull first
+	fmt.Printf("→ Pulling backup image %s...\n", tag)
+	if _, err := m.run("pull", tag); err == nil {
+		fmt.Println("  ✓ Backup image pulled from registry")
+		return nil
+	}
+	fmt.Printf("  Pull failed, falling back to local build...\n")
+
+	// Fallback: build from embed backup.Containerfile
+	return m.buildBackupImage(tag)
+}
+
+// buildBackupImage builds the backup image from embedded backup.Containerfile.
+func (m *BackupManager) buildBackupImage(tag string) error {
 	fmt.Println("→ Building pgbackrest backup image...")
 
 	buildDir := filepath.Join(m.dataDir, "backup-build")
@@ -57,17 +72,12 @@ func (m *BackupManager) EnsureBackupImage() error {
 		return fmt.Errorf("creating backup build directory: %w", err)
 	}
 
-	// Write backup.Containerfile
 	containerfile := filepath.Join(buildDir, "Containerfile")
 	if err := os.WriteFile(containerfile, []byte(res.BackupContainerfile), 0644); err != nil {
 		return fmt.Errorf("writing backup Containerfile: %w", err)
 	}
 
-	if err := m.runInteractive("build",
-		"-t", tag,
-		"-f", containerfile,
-		buildDir,
-	); err != nil {
+	if err := m.runInteractive("build", "-t", tag, "-f", containerfile, buildDir); err != nil {
 		return fmt.Errorf("podman build backup image: %w", err)
 	}
 
@@ -177,12 +187,8 @@ func (m *BackupManager) WritePgbackrestConf() (string, error) {
 // ─── Container management ─────────────────────────────────────────────
 
 // EnsureBackupContainer creates and starts the backup container if it doesn't exist.
+// Caller is responsible for calling EnsureNetwork() first.
 func (m *BackupManager) EnsureBackupContainer(confPath string) error {
-	// Ensure shared network exists first
-	if err := m.EnsureNetwork(); err != nil {
-		return err
-	}
-
 	containerName := m.cfg.Backup.ContainerName
 
 	exists, err := m.containerExists(containerName)
