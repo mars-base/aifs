@@ -3,9 +3,9 @@
 package podman
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -281,9 +281,22 @@ func (m *Manager) Status() (*ContainerStatus, error) {
 }
 
 // Exec runs a command inside the container, returns stdout.
+// Wraps podman exec with timeout(1) to prevent indefinite hangs
+// (Go's CommandContext signal may not kill stuck podman processes).
 func (m *Manager) Exec(args ...string) (string, error) {
-	execArgs := append([]string{"exec", m.cfg.Podman.ContainerName}, args...)
-	return m.run(execArgs...)
+	podmanArgs := append([]string{"exec", m.cfg.Podman.ContainerName}, args...)
+	// timeout 30 podman exec <container> <cmd...>
+	cmdArgs := append([]string{"timeout", "30", m.podman}, podmanArgs...)
+	slog.Debug("exec", "args", cmdArgs)
+	cmd := exec.Command("timeout", cmdArgs...)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("podman exec %s: %s", strings.Join(args, " "), string(exitErr.Stderr))
+		}
+		return "", fmt.Errorf("podman exec %s: %w", strings.Join(args, " "), err)
+	}
+	return string(out), nil
 }
 
 // Destroy removes the container. Data directories on the host are preserved.
@@ -299,18 +312,16 @@ func (m *Manager) Destroy() error {
 	return nil
 }
 
-// PGIsReady checks if PostgreSQL is accepting connections.
-// Each podman exec call uses a 10s timeout to prevent hanging if podman is unresponsive.
+// PGIsReady checks if PostgreSQL is accepting connections via TCP.
+// Uses a direct TCP connection instead of podman exec to avoid podman hang issues.
 func (m *Manager) PGIsReady() (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	execArgs := append([]string{"exec", m.cfg.Podman.ContainerName}, "pg_isready", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database)
-	out, err := m.runCtx(ctx, execArgs...)
+	addr := fmt.Sprintf("127.0.0.1:%d", m.cfg.Podman.HostPort)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
-		return false, nil // pg_isready failed = not ready
+		return false, nil
 	}
-	return strings.Contains(out, "accepting connections"), nil
+	conn.Close()
+	return true, nil
 }
 
 // ─── Internal methods ─────────────────────────────────────────────
@@ -318,20 +329,6 @@ func (m *Manager) PGIsReady() (bool, error) {
 func (m *Manager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("podman %s: %s", strings.Join(args, " "), string(exitErr.Stderr))
-		}
-		return "", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
-	}
-	return string(out), nil
-}
-
-// runCtx runs podman with a context. Use for exec calls that should not hang indefinitely.
-func (m *Manager) runCtx(ctx context.Context, args ...string) (string, error) {
-	slog.Debug("podman", "args", args)
-	cmd := exec.CommandContext(ctx, m.podman, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
