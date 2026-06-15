@@ -281,22 +281,9 @@ func (m *Manager) Status() (*ContainerStatus, error) {
 }
 
 // Exec runs a command inside the container, returns stdout.
-// Wraps podman exec with timeout(1) to prevent indefinite hangs
-// (Go's CommandContext signal may not kill stuck podman processes).
 func (m *Manager) Exec(args ...string) (string, error) {
 	podmanArgs := append([]string{"exec", m.cfg.Podman.ContainerName}, args...)
-	// timeout 30 podman exec <container> <cmd...>
-	cmdArgs := append([]string{"timeout", "30", m.podman}, podmanArgs...)
-	slog.Debug("exec", "args", cmdArgs)
-	cmd := exec.Command("timeout", cmdArgs...)
-	out, err := cmd.Output()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("podman exec %s: %s", strings.Join(args, " "), string(exitErr.Stderr))
-		}
-		return "", fmt.Errorf("podman exec %s: %w", strings.Join(args, " "), err)
-	}
-	return string(out), nil
+	return execWithTimeout(m.podman, podmanArgs, 30*time.Second)
 }
 
 // Destroy removes the container. Data directories on the host are preserved.
@@ -434,4 +421,36 @@ log-level-console=info
 		return "", fmt.Errorf("writing %s: %w", confPath, err)
 	}
 	return confPath, nil
+}
+
+// execWithTimeout runs podman with a goroutine+channel timeout.
+// Explicitly kills the process on timeout, works cross-platform.
+func execWithTimeout(podmanPath string, args []string, timeout time.Duration) (string, error) {
+	slog.Debug("execWithTimeout", "args", args)
+	cmd := exec.Command(podmanPath, args...)
+
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		out, err := cmd.Output()
+		done <- result{string(out), err}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			if exitErr, ok := r.err.(*exec.ExitError); ok {
+				return "", fmt.Errorf("podman %s: %s", strings.Join(args, " "), string(exitErr.Stderr))
+			}
+			return "", fmt.Errorf("podman %s: %w", strings.Join(args, " "), r.err)
+		}
+		return r.out, nil
+	case <-time.After(timeout):
+		cmd.Process.Kill()
+		return "", fmt.Errorf("podman %s timed out after %v", strings.Join(args, " "), timeout)
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mars-base/aifs/internal/config"
 	"github.com/mars-base/aifs/internal/platform"
@@ -264,8 +265,8 @@ func (m *BackupManager) CheckContainerRunning(name string) (bool, error) {
 
 // BackupExec runs a command inside the backup container.
 func (m *BackupManager) BackupExec(args ...string) (string, error) {
-	execArgs := append([]string{"exec", m.cfg.Backup.ContainerName}, args...)
-	return m.run(execArgs...)
+	podmanArgs := append([]string{"exec", m.cfg.Backup.ContainerName}, args...)
+	return execWithTimeout(m.podman, podmanArgs, 30*time.Second)
 }
 
 // ─── Internal methods ─────────────────────────────────────────────
