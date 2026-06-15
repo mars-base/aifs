@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -27,7 +28,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		fmt.Println("=== aifs status ===")
-			fmt.Printf("Instance: %s\n", cfg.Instance)
+		fmt.Printf("Instance: %s\n", cfg.Instance)
 
 		// Container status
 		cs, err := pm.Status()
@@ -53,16 +54,31 @@ var statusCmd = &cobra.Command{
 		// Backup info (when PITR enabled)
 		if cfg.PITR.Enabled && cs.Running {
 			pt := pitr.New(cfg, pm)
-			snapshots, err := pt.ListSnapshots(5)
-			if err == nil && len(snapshots) > 0 {
-				fmt.Println("\nRecent backups:")
-				for _, s := range snapshots {
-					fmt.Printf("  %s  %s  %s\n",
-						s.Timestamp.Format("2006-01-02 15:04"),
-						s.Name, s.Type)
+
+			type backupResult struct {
+				snapshots []pitr.Snapshot
+				err       error
+			}
+			ch := make(chan backupResult, 1)
+			go func() {
+				snapshots, err := pt.ListSnapshots(5)
+				ch <- backupResult{snapshots, err}
+			}()
+
+			select {
+			case r := <-ch:
+				if r.err == nil && len(r.snapshots) > 0 {
+					fmt.Println("\nRecent backups:")
+					for _, s := range r.snapshots {
+						fmt.Printf("  %s  %s  %s\n",
+							s.Timestamp.Format("2006-01-02 15:04"),
+							s.Name, s.Type)
+					}
+				} else {
+					fmt.Println("\nRecent backups: (none)")
 				}
-			} else {
-				fmt.Println("\nRecent backups: (none)")
+			case <-time.After(5 * time.Second):
+				fmt.Println("\nRecent backups: (pgbackrest not responding)")
 			}
 		}
 

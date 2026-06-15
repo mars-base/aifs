@@ -37,7 +37,7 @@ Backup types:
   incr  - Incremental backup (changes since last backup)
   diff  - Differential backup (changes since last full backup)`,
 	Example: `  aifs snapshot create
-  aifs snapshot create --name "after-training"
+  aifs snapshot create --comment "after-training"
   aifs snapshot create --type incr --comment "incremental backup"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadConfig(); err != nil {
