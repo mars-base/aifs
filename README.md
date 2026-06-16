@@ -19,7 +19,11 @@ AI agents are powerful but unpredictable: they can delete files, corrupt data, o
 |------------|---------|---------|
 | Podman | Container runtime | [podman.io](https://podman.io) |
 
-- **Linux**: podman runs natively, no VM required
+- **Linux**: podman runs natively, no VM required. On Debian/Ubuntu, enable unprivileged user namespaces for rootless containers:
+  ```bash
+  sudo sysctl kernel.unprivileged_userns_clone=1
+  echo 'kernel.unprivileged_userns_clone=1' | sudo tee /etc/sysctl.d/99-rootless-podman.conf
+  ```
 - **macOS**: `brew install podman` + `podman machine init`
 - **Windows**: Run `scripts/aifs-setup.ps1` to install WSL2 + Podman (see below), or install manually
 
