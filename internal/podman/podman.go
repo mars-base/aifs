@@ -298,14 +298,89 @@ func (m *Manager) Exec(args ...string) (string, error) {
 
 // Destroy removes the container. Data directories on the host are preserved.
 func (m *Manager) Destroy() error {
-	fmt.Println("⚠️  Removing container (host data directories are preserved)")
+	return m.DestroyWithData(false)
+}
+
+// DestroyWithData removes the container. If cleanData is true, the host data
+// and WAL directories are also removed, along with the instance's pgBackRest
+// stanza directories in the shared backup repo.
+func (m *Manager) DestroyWithData(cleanData bool) error {
+	if cleanData {
+		fmt.Println("⚠️  Removing container and all host data")
+	} else {
+		fmt.Println("⚠️  Removing container (host data directories are preserved)")
+	}
 
 	// Stopping and removing container
 	m.run("stop", m.cfg.Podman.ContainerName)
 	m.run("rm", "-f", m.cfg.Podman.ContainerName)
 
-	fmt.Printf("  Data preserved at: %s\n", m.cfg.Podman.DataDir)
-	fmt.Printf("  WAL preserved at:  %s\n", m.cfg.Podman.WALDir)
+	if !cleanData {
+		fmt.Printf("  Data preserved at: %s\n", m.cfg.Podman.DataDir)
+		fmt.Printf("  WAL preserved at:  %s\n", m.cfg.Podman.WALDir)
+		return nil
+	}
+
+	// Remove host data directories. In rootless mode some files are owned by
+	 // subordinate UIDs, so fall back to a container-based deletion if needed.
+	for _, desc := range []struct {
+		name string
+		path string
+	}{
+		{"data", m.cfg.Podman.DataDir},
+		{"wal", m.cfg.Podman.WALDir},
+	} {
+		if desc.path == "" {
+			continue
+		}
+		if err := removeHostDir(m.podman, desc.path); err != nil {
+			return fmt.Errorf("removing %s directory %s: %w", desc.name, desc.path, err)
+		}
+		fmt.Printf("  ✓ %s directory removed: %s\n", desc.name, desc.path)
+	}
+
+	// Remove pgBackRest stanza directories from the shared repo.
+	if m.cfg.PITR.Enabled && m.cfg.Backup.DataDir != "" {
+		stanza := m.cfg.PITR.PgBackRestStanza
+		repo := m.cfg.Backup.DataDir
+		for _, sub := range []string{"backup", "archive"} {
+			p := filepath.Join(repo, sub, stanza)
+			if err := os.RemoveAll(p); err != nil {
+				return fmt.Errorf("removing repo %s directory %s: %w", sub, p, err)
+			}
+		}
+		fmt.Printf("  ✓ backup stanza removed: %s\n", stanza)
+	}
+
+	return nil
+}
+
+// removeHostDir deletes a host directory, handling rootless podman ownership
+// by falling back to a temporary container with the parent directory mounted.
+func removeHostDir(podmanPath, dir string) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil
+	}
+
+	if err := os.RemoveAll(dir); err == nil {
+		return nil
+	}
+
+	// Fallback: delete from inside a container running as root within the
+	// user namespace so subordinate-UID files can be removed.
+	parent := filepath.Dir(dir)
+	base := filepath.Base(dir)
+	if parent == dir || parent == "" {
+		return fmt.Errorf("cannot determine parent of %s", dir)
+	}
+
+	cmd := exec.Command(podmanPath, "run", "--rm",
+		"-v", fmt.Sprintf("%s:/target", parent),
+		"alpine:3.20", "sh", "-c", fmt.Sprintf("rm -rf /target/%s", base),
+	)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
 	return nil
 }
 

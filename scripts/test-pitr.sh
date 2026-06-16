@@ -39,28 +39,7 @@ fi
 
 cleanup_instance() {
     echo "→ Cleaning up instance ${INSTANCE} (if it exists)..."
-    "$AIFS" destroy -i "${INSTANCE}" --force >/dev/null 2>&1 || true
-
-    # Remove host data directories. In rootless podman the container root
-    # user maps to the current host UID, but postgres files are owned by a
-    # subordinate UID, so delete from inside a container with the same layout.
-    local data_dir
-    data_dir=$(grep -A20 "^    ${INSTANCE}:" "$HOME/.aifs/config.yaml" 2>/dev/null | grep 'data_dir:' | head -1 | awk '{print $2}' || true)
-    if [[ -n "${data_dir:-}" && -d "${data_dir%/*}" ]]; then
-        podman run --rm \
-            -v "${data_dir%/*}:/target" \
-            alpine:3.20 sh -c "rm -rf /target/*" >/dev/null 2>&1 || true
-    fi
-
-    # Remove any stale pgBackRest stanza directories in the shared repo so
-    # that recreating the instance with a fresh database does not hit
-    # stanza info mismatch errors.
-    local backup_repo
-    backup_repo=$(grep -A5 '^backup:' "$HOME/.aifs/config.yaml" 2>/dev/null | grep 'data_dir:' | head -1 | awk '{print $2}' || true)
-    if [[ -n "${backup_repo:-}" && -d "${backup_repo}" ]]; then
-        rm -rf "${backup_repo}/backup/aifs_${INSTANCE}" \
-               "${backup_repo}/archive/aifs_${INSTANCE}" >/dev/null 2>&1 || true
-    fi
+    "$AIFS" destroy -i "${INSTANCE}" --clean-data --force >/dev/null 2>&1 || true
 }
 
 cleanup_instance

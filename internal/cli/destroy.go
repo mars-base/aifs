@@ -11,24 +11,33 @@ import (
 	"github.com/mars-base/aifs/internal/podman"
 )
 
-var destroyForce bool
+var (
+	destroyForce     bool
+	destroyCleanData bool
+)
 
 func init() {
 	rootCmd.AddCommand(destroyCmd)
 	destroyCmd.Flags().BoolVar(&destroyForce, "force", false, "Skip confirmation prompt")
+	destroyCmd.Flags().BoolVar(&destroyCleanData, "clean-data", false, "Also remove host data, WAL and backup repo stanza")
 }
 
 var destroyCmd = &cobra.Command{
 	Use:   "destroy",
 	Short: "Destroy an instance and remove its configuration",
 	Long: `destroy stops and removes the container, then removes the
-instance's configuration entry. Host data directories are preserved.
+instance's configuration entry.
+
+By default host data directories are preserved. Use --clean-data to also
+delete the data directory, WAL directory, and the instance's pgBackRest
+stanza from the shared backup repo.
 
 Use --force to skip the confirmation prompt.
 
 Examples:
   aifs destroy -i proj01
-  aifs destroy -i proj01 --force`,
+  aifs destroy -i proj01 --force
+  aifs destroy -i proj01 --clean-data --force`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := cfgPath
 		if path == "" {
@@ -63,9 +72,19 @@ Examples:
 			fmt.Printf("⚠️  This will destroy instance %q:\n", cfgInstance)
 			fmt.Printf("  - Stop and remove container: %s\n", inst.Podman.ContainerName)
 			fmt.Printf("  - Remove config entry\n")
-			fmt.Printf("\n  Data directories preserved on host:\n")
-			fmt.Printf("    data: %s\n", inst.Podman.DataDir)
-			fmt.Printf("    wal:  %s\n", inst.Podman.WALDir)
+			if destroyCleanData {
+				fmt.Printf("\n  ⚠️  Host data will be PERMANENTLY deleted:\n")
+				fmt.Printf("    data:       %s\n", inst.Podman.DataDir)
+				fmt.Printf("    wal:        %s\n", inst.Podman.WALDir)
+				if inst.PITR.Enabled {
+					fmt.Printf("    backup:     %s/backup/%s\n", cfg.Backup.DataDir, inst.PITR.PgBackRestStanza)
+					fmt.Printf("    archive:    %s/archive/%s\n", cfg.Backup.DataDir, inst.PITR.PgBackRestStanza)
+				}
+			} else {
+				fmt.Printf("\n  Data directories preserved on host:\n")
+				fmt.Printf("    data: %s\n", inst.Podman.DataDir)
+				fmt.Printf("    wal:  %s\n", inst.Podman.WALDir)
+			}
 			fmt.Printf("\nConfirm? [y/N]: ")
 
 			var answer string
@@ -76,9 +95,9 @@ Examples:
 			}
 		}
 
-		// 1. Destroy container
+		// 1. Destroy container (and data if requested)
 		fmt.Printf("→ Stopping and removing container %s...\n", inst.Podman.ContainerName)
-		if err := pm.Destroy(); err != nil {
+		if err := pm.DestroyWithData(destroyCleanData); err != nil {
 			fmt.Printf("  ⚠️  Warning: failed to destroy container: %v\n", err)
 		}
 
