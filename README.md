@@ -21,7 +21,24 @@ AI agents are powerful but unpredictable: they can delete files, corrupt data, o
 
 - **Linux**: podman runs natively, no VM required
 - **macOS**: `brew install podman` + `podman machine init`
-- **Windows**: Install WSL2 first, then `winget install podman` + `podman machine init`
+- **Windows**: Run `scripts/aifs-setup.ps1` to install WSL2 + Podman (see below), or install manually
+
+### Windows setup script
+
+`scripts/aifs-setup.ps1` automates the Windows prerequisite setup:
+
+```powershell
+# Default: no proxy (direct connection)
+powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1
+
+# Use a custom proxy
+powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1 -Proxy http://proxy.example.com:8080
+
+# Explicitly disable proxy (same as default)
+powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1 -Proxy none
+```
+
+The script checks CPU virtualization, enables WSL2, installs Podman, and initializes a podman machine.
 
 ## Installation
 

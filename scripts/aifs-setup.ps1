@@ -1,5 +1,5 @@
 # aifs-setup.ps1 — Check virtualization, install WSL + podman, init podman machine
-# Usage: powershell -ExecutionPolicy Bypass -File aifs-setup.ps1
+# Usage: powershell -ExecutionPolicy Bypass -File aifs-setup.ps1 [-Proxy <url>|none]
 #
 # Steps:
 #   1. Check CPU virtualization (VT-x/AMD-V, SLAT, VMM)
@@ -8,6 +8,13 @@
 #   4. Init and start podman machine
 #
 # Download from: http://10.241.21.97:1357/aifs-setup.ps1
+
+[CmdletBinding()]
+param(
+    [string]$Proxy = ""
+)
+
+$useProxy = ($Proxy -and ($Proxy -ne "none"))
 
 $ErrorActionPreference = "Continue"
 
@@ -134,9 +141,14 @@ if ($wslExists) {
 }
 
 if (-not $wslWorking) {
-    # Set proxy for WSL download
-    $env:HTTPS_PROXY = "http://10.241.21.97:8118"
-    $env:HTTP_PROXY  = "http://10.241.21.97:8118"
+    # Set proxy for WSL download (configurable, default to internal proxy)
+    if ($useProxy) {
+        $env:HTTPS_PROXY = $Proxy
+        $env:HTTP_PROXY  = $Proxy
+        Write-Host "  Using proxy: $Proxy"
+    } else {
+        Write-Host "  No proxy configured"
+    }
 
     # Step 1: Enable Windows features via dism (works for both fresh and stub cases)
     Write-Host "  Enabling WSL features via dism..."
@@ -266,24 +278,24 @@ if ($podmanInstalled) {
         Write-Host "  URL: $msiUrl"
         Write-Host ""
 
-        # Try with proxy first, then direct
-        $proxyUrl = "http://10.241.21.97:8118"
         $downloadOk = $false
 
         # Attempt 1: NET.WebClient with proxy (handles 302 redirects properly)
-        try {
-            Write-Host "  Trying via proxy $proxyUrl ..."
-            $wc = New-Object System.Net.WebClient
-            $wc.Proxy = New-Object System.Net.WebProxy($proxyUrl, $true)
-            $wc.DownloadFile($msiUrl, $installerPath)
-            if ((Test-Path $installerPath) -and ((Get-Item $installerPath).Length -gt 1MB)) {
-                $downloadOk = $true
-                Print-Result "Downloaded via proxy ($('{0:N0}' -f (Get-Item $installerPath).Length) bytes)" "ok"
-            } else {
-                Write-Host "  Downloaded file too small or missing"
+        if ($useProxy) {
+            try {
+                Write-Host "  Trying via proxy $Proxy ..."
+                $wc = New-Object System.Net.WebClient
+                $wc.Proxy = New-Object System.Net.WebProxy($Proxy, $true)
+                $wc.DownloadFile($msiUrl, $installerPath)
+                if ((Test-Path $installerPath) -and ((Get-Item $installerPath).Length -gt 1MB)) {
+                    $downloadOk = $true
+                    Print-Result "Downloaded via proxy ($('{0:N0}' -f (Get-Item $installerPath).Length) bytes)" "ok"
+                } else {
+                    Write-Host "  Downloaded file too small or missing"
+                }
+            } catch {
+                Write-Host "  Proxy attempt failed: $($_.Exception.Message)"
             }
-        } catch {
-            Write-Host "  Proxy attempt failed: $($_.Exception.Message)"
         }
 
         # Attempt 2: NET.WebClient direct (no proxy)
