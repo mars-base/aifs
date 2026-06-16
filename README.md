@@ -52,11 +52,33 @@ aifs snapshot create --type full --comment "before-agent-run"
 
 # 5. Agent does its work...
 
-# 6. If something goes wrong, rewind
-aifs restore -i default --time "2026-06-15 14:30:00"
+# 6. If something goes wrong, rewind (accepts multiple timezone formats)
+aifs restore -i default --time "2026-06-15 14:30:00+00"
 
 # 7. Everything is back — nothing lost
 ```
+
+## Restore time formats
+
+`aifs restore --time` accepts the following timezone-aware formats:
+
+```bash
+aifs restore -i default --time "2026-06-15 14:30:00+00:00"
+aifs restore -i default --time "2026-06-15 14:30:00+0000"
+aifs restore -i default --time "2026-06-15 14:30:00+00"
+aifs restore -i default --time "2026-06-15 22:30:00+08"
+```
+
+You can also omit the timezone offset, in which case the time is interpreted
+as local time:
+
+```bash
+aifs restore -i default --time "2026-06-15 14:30:00"
+```
+
+The provided time is normalized to the same absolute point in time before being
+passed to pgBackRest, so `+08` and `+00` inputs that represent the same moment
+will restore to the same state.
 
 ## Snapshot types
 
