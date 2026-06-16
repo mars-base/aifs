@@ -246,6 +246,14 @@ if (CmdExists "wsl") {
         Print-Result "WSL kernel updated" "ok"
     } else {
         Print-Result "WSL update" "warn" "Exit code: $($updateKernel.ExitCode) — reboot may be needed"
+        Write-Host ""
+        Write-Host "  If podman machine init later fails with a WSL2 kernel error,"
+        Write-Host "  manually download and install the WSL2 Linux kernel update package:"
+        Write-Host ""
+        Write-Host "    URL: https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
+        Write-Host ""
+        Write-Host "  After installing the MSI, reboot the machine, then re-run this script."
+        Write-Host ""
     }
 }
 Write-Host ""

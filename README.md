@@ -25,7 +25,12 @@ AI agents are powerful but unpredictable: they can delete files, corrupt data, o
 
 ### Windows setup script
 
-`scripts/aifs-setup.ps1` automates the Windows prerequisite setup:
+On Windows you need to complete **two steps**:
+
+1. Run `scripts/aifs-setup.ps1` to prepare the environment (WSL2 + Podman).
+2. Install `aifs` itself (see [Installation](#installation) below).
+
+`aifs-setup.ps1` checks CPU virtualization, enables WSL2, installs Podman, and initializes a podman machine. The first run may enable Windows features that require a reboot:
 
 ```powershell
 # Default: no proxy (direct connection)
@@ -38,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1 -Proxy http://pr
 powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1 -Proxy none
 ```
 
-The script checks CPU virtualization, enables WSL2, installs Podman, and initializes a podman machine.
+If the script reports a reboot is required, restart the machine and then **run the same command again**. Repeat until the script prints the "Setup Complete" / environment-ready message. After that, proceed to install `aifs`.
 
 ## Installation
 
