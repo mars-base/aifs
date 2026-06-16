@@ -105,14 +105,36 @@ $cpuOk = ($virtFW -eq "TRUE") -and ($slat -eq "TRUE") -and ($vmm -eq "TRUE")
 if ($cpuOk) {
     Print-Result "CPU supports virtualization" "ok"
 } else {
-    Print-Result "CPU lacks virtualization" "fail"
-    Write-Host ""
-    Write-Host "  This machine cannot run WSL2/podman."
-    Write-Host "  Virtualization must be enabled in BIOS,"
-    Write-Host "  or this may be a nested VM without passthrough."
-    Write-Host ""
-    Write-Host "Setup aborted."
-    exit 1
+    Print-Result "wmic reports no virtualization flags" "warn" "May be a nested VM; cross-checking..."
+
+    # Cross-check 1: systeminfo reports an active hypervisor
+    $sysInfo = cmd.exe /c "systeminfo /fo csv" 2>&1
+    $sysInfoStr = ($sysInfo | Out-String).Trim()
+    if (($sysInfoStr -match "hypervisor has been detected")) {
+        Print-Result "systeminfo reports active hypervisor" "ok"
+        $cpuOk = $true
+    }
+
+    # Cross-check 2: wsl --status actually works
+    if (-not $cpuOk -and (CmdExists "wsl")) {
+        $probe = Start-Process -FilePath "wsl.exe" -ArgumentList "--status" -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:TEMP\wsl-probe.out" -RedirectStandardError "$env:TEMP\wsl-probe.err"
+        if ($probe.ExitCode -eq 0) {
+            Print-Result "wsl --status succeeded" "ok" "WSL2 is functional"
+            $cpuOk = $true
+        }
+    }
+
+    if (-not $cpuOk) {
+        Print-Result "CPU lacks virtualization" "fail"
+        Write-Host ""
+        Write-Host "  This machine cannot run WSL2/podman."
+        Write-Host "  Virtualization must be enabled in BIOS,"
+        Write-Host "  or this may be a nested VM without passthrough."
+        Write-Host ""
+        Write-Host "Setup aborted."
+        exit 1
+    }
 }
 Write-Host ""
 

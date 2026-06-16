@@ -85,7 +85,32 @@ $allOk = ($virtFW -eq "TRUE") -and ($slat -eq "TRUE") -and ($vmm -eq "TRUE")
 if ($allOk) {
     Write-Host "  [OK] CPU supports nested virtualization"
 } else {
-    Write-Host "  [FAIL] CPU lacks virtualization features for WSL2/podman"
+    Write-Host "  [WARN] wmic reports FALSE, but this may be a nested VM"
+    Write-Host "         where the hypervisor hides CPU flags. Cross-checking..."
+
+    # Cross-check 1: systeminfo reports an active hypervisor
+    $sysInfo = cmd.exe /c "systeminfo /fo csv" 2>&1
+    $sysInfoStr = ($sysInfo | Out-String).Trim()
+    $hasHypervisor = ($sysInfoStr -match "hypervisor has been detected")
+    if ($hasHypervisor) {
+        Write-Host "  [OK] systeminfo reports a hypervisor is already active"
+        $allOk = $true
+    }
+
+    # Cross-check 2: wsl --status actually works
+    if (-not $allOk -and (CmdExists "wsl")) {
+        wsl.exe --status | Out-File -FilePath "$env:TEMP\wsl-diag-status.out" -Encoding UTF8
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] wsl --status succeeded (WSL2 functional)"
+            $allOk = $true
+        } else {
+            Write-Host "  [FAIL] wsl --status failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    if (-not $allOk) {
+        Write-Host "  [FAIL] CPU lacks virtualization features for WSL2/podman"
+    }
 }
 Write-Host ""
 
