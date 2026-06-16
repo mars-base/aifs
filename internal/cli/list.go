@@ -19,7 +19,7 @@ func init() {
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all aifs instances",
-	Long:  `list shows all configured instances, their container status, and database name.`,
+	Long:  `list shows all configured instances and their container status.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := cfgPath
 		if path == "" {
@@ -41,24 +41,19 @@ var listCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("%-12s %-12s %-20s %-10s %s\n", "NAME", "DATABASE", "CONTAINER", "STATUS", "PORT")
-		fmt.Println(strings.Repeat("-", 70))
+		fmt.Printf("%-12s %-30s\n", "NAME", "STATUS")
+		fmt.Println(strings.Repeat("-", 43))
 
 		for name := range cfg.Instances {
 			// Work on a per-instance view of the config.
 			if err := cfg.SetInstance(name); err != nil {
-				fmt.Printf("%-12s %-12s %-20s %-10s %s\n", name, "-", "-", "error", err)
+				fmt.Printf("%-12s %-30s\n", name, "error")
 				continue
-			}
-
-			dbName := cfg.Postgres.Database
-			if dbName == "" {
-				dbName = name + "_db"
 			}
 
 			pm, err := podman.New(cfg)
 			if err != nil {
-				fmt.Printf("%-12s %-12s %-20s %-10s %s\n", name, dbName, cfg.Podman.ContainerName, "error", err)
+				fmt.Printf("%-12s %-30s\n", name, "error")
 				continue
 			}
 
@@ -68,8 +63,7 @@ var listCmd = &cobra.Command{
 				status = "error"
 			}
 
-			fmt.Printf("%-12s %-12s %-20s %-10s %d\n",
-				name, dbName, cfg.Podman.ContainerName, status, cfg.Postgres.Port)
+			fmt.Printf("%-12s %-30s\n", name, status)
 		}
 
 		return nil
