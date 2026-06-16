@@ -336,6 +336,32 @@ func (m *Manager) ContainerIP() (string, error) {
 	return ip, nil
 }
 
+// RunRestoreContainer runs pgBackRest restore in a temporary container.
+// The PG container must be stopped first. The temporary container mounts the
+// same data directory and backup repo, using the per-instance pgbackrest.conf
+// (which has no pg1-host, so restore runs locally on the data directory).
+func (m *Manager) RunRestoreContainer(stanza, target string) (string, error) {
+	confPath, err := m.writeInstancePgbackrestConf()
+	if err != nil {
+		return "", fmt.Errorf("generating pgbackrest.conf: %w", err)
+	}
+
+	args := []string{
+		"run", "--rm",
+		"--network", m.cfg.Podman.Network,
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", m.cfg.Podman.DataDir),
+		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", m.cfg.Backup.DataDir),
+		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", confPath),
+		m.cfg.Podman.ImageTag,
+		"pgbackrest", "--stanza=" + stanza, "restore",
+		"--type=time", "--target=" + target,
+		"--target-action=promote", "--delta",
+		"--log-level-console=info",
+	}
+
+	return execWithTimeout(m.podman, args, 10*time.Minute)
+}
+
 // ─── Internal methods ─────────────────────────────────────────────
 
 func (m *Manager) run(args ...string) (string, error) {

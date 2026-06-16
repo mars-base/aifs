@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
@@ -249,6 +250,30 @@ func (m *BackupManager) EnsureBackupDirs() error {
 	return nil
 }
 
+// EnsureRepoReadable recursively ensures the backup repository is readable by
+// other users. This is required because the PostgreSQL container runs archive-get
+// as the postgres user (different host UID than the backup container root).
+func (m *BackupManager) EnsureRepoReadable() error {
+	repoDir := m.cfg.Backup.DataDir
+	if repoDir == "" {
+		return nil
+	}
+
+	if err := os.Chmod(repoDir, 0755); err != nil {
+		return fmt.Errorf("chmod backup repo %s: %w", repoDir, err)
+	}
+
+	return filepath.Walk(repoDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return os.Chmod(path, info.Mode()|0555)
+		}
+		return os.Chmod(path, info.Mode()|0444)
+	})
+}
+
 // ─── pgbackrest.conf generation ──────────────────────────────────
 
 // WritePgbackrestConf generates pgbackrest.conf with all instance stanzas.
@@ -307,22 +332,70 @@ func (m *BackupManager) EnsureBackupContainer(confPath string, hostEntries map[s
 		return err
 	}
 
-	if !exists {
-		fmt.Println("→ Creating and starting backup container...")
-		return m.createBackupContainer(confPath, hostEntries)
+	if exists {
+		// Check whether the existing container has the required --add-host entries.
+		// PG container IPs can change after stop/start, so recreate if stale.
+		stale, err := m.hostEntriesStale(hostEntries)
+		if err != nil {
+			return fmt.Errorf("checking backup container host entries: %w", err)
+		}
+		if stale {
+			fmt.Println("→ Backup container host entries are stale, recreating...")
+			if _, err := m.run("rm", "-f", containerName); err != nil {
+				return fmt.Errorf("removing stale backup container: %w", err)
+			}
+			return m.createBackupContainer(confPath, hostEntries)
+		}
+
+		running, err := m.containerRunning(containerName)
+		if err != nil {
+			return err
+		}
+		if !running {
+			fmt.Println("→ Starting backup container...")
+			return m.StartBackupContainer()
+		}
+
+		fmt.Printf("→ Backup container %s is already running\n", containerName)
+		return nil
 	}
 
-	running, err := m.containerRunning(containerName)
+	fmt.Println("→ Creating and starting backup container...")
+	return m.createBackupContainer(confPath, hostEntries)
+}
+
+// hostEntriesStale returns true if the running backup container's ExtraHosts
+// do not contain all required hostEntries.
+func (m *BackupManager) hostEntriesStale(hostEntries map[string]string) (bool, error) {
+	out, err := m.run("inspect", m.cfg.Backup.ContainerName, "--format", "{{json .HostConfig.ExtraHosts}}")
 	if err != nil {
-		return err
+		return false, err
 	}
-	if !running {
-		fmt.Println("→ Starting backup container...")
-		return m.StartBackupContainer()
+	out = strings.TrimSpace(out)
+	if out == "" || out == "null" {
+		return len(hostEntries) > 0, nil
 	}
 
-	fmt.Printf("→ Backup container %s is already running\n", containerName)
-	return nil
+	var extraHosts []string
+	if err := json.Unmarshal([]byte(out), &extraHosts); err != nil {
+		// Fallback: parse raw string slice if JSON unmarshal fails.
+		extraHosts = strings.Split(strings.Trim(out, "[]"), " ")
+	}
+
+	current := make(map[string]string, len(extraHosts))
+	for _, entry := range extraHosts {
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) == 2 {
+			current[parts[0]] = parts[1]
+		}
+	}
+
+	for host, ip := range hostEntries {
+		if current[host] != ip {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // StartBackupContainer starts the backup container.
@@ -376,7 +449,7 @@ func (m *BackupManager) CheckContainerRunning(name string) (bool, error) {
 // BackupExec runs a command inside the backup container.
 func (m *BackupManager) BackupExec(args ...string) (string, error) {
 	podmanArgs := append([]string{"exec", "-i=false", m.cfg.Backup.ContainerName}, args...)
-	return execWithTimeout(m.podman, podmanArgs, 30*time.Second)
+	return execWithTimeout(m.podman, podmanArgs, 10*time.Minute)
 }
 
 // ─── Internal methods ─────────────────────────────────────────────

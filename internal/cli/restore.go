@@ -17,7 +17,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(restoreCmd)
-	restoreCmd.Flags().StringVar(&restoreTime, "time", "", "Restore to specified time (ISO8601, e.g. '2026-06-14 15:04:05')")
+	restoreCmd.Flags().StringVar(&restoreTime, "time", "", "Restore to specified time (e.g. '2026-06-14 15:04:05+00' or '2026-06-14 15:04:05')")
 	restoreCmd.Flags().BoolVar(&restoreDryRun, "dry-run", false, "Only show what would be done, do not execute")
 	restoreCmd.Flags().BoolVar(&restoreForce, "force", false, "Skip confirmation prompt")
 }
@@ -36,9 +36,9 @@ Process:
   4. JuiceFS auto-detects new data
 
 Examples:
-  aifs restore --time "2026-06-14 15:04:05"
-  aifs restore --time "2026-06-14 15:04:05" --dry-run
-  aifs restore --time "2026-06-14 15:04:05" --force`,
+  aifs restore --time "2026-06-14 15:04:05+00"
+  aifs restore --time "2026-06-14 15:04:05+00" --dry-run
+  aifs restore --time "2026-06-14 15:04:05+00" --force`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadConfig(); err != nil {
 			return err
@@ -48,9 +48,23 @@ Examples:
 			return fmt.Errorf("Please specify restore time: --time \"2026-06-14 15:04:05\"")
 		}
 
-		targetTime, err := time.Parse("2006-01-02 15:04:05", restoreTime)
+		var targetTime time.Time
+		var err error
+		for _, layout := range []string{
+			"2006-01-02 15:04:05-07:00",
+			"2006-01-02 15:04:05-0700",
+			"2006-01-02 15:04:05-07",
+			"2006-01-02 15:04:05Z07:00",
+			"2006-01-02 15:04:05Z0700",
+			"2006-01-02 15:04:05",
+		} {
+			targetTime, err = time.Parse(layout, restoreTime)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
-			return fmt.Errorf("Invalid time format: %w (use: YYYY-MM-DD HH:MM:SS)", err)
+			return fmt.Errorf("Invalid time format: %w (use: YYYY-MM-DD HH:MM:SS+00 or YYYY-MM-DD HH:MM:SS)", err)
 		}
 
 		pm, err := newPodman()

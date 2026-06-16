@@ -46,12 +46,18 @@ func (m *Manager) EnsureStanza() error {
 	out, err := m.pgbackrest("--stanza="+stanza, "stanza-create", "--log-level-console=info")
 	if err != nil {
 		// stanza-create errors if already exists, ignore
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(out, "already exists") {
-			return nil
+		if !strings.Contains(err.Error(), "already exists") && !strings.Contains(out, "already exists") {
+			_ = m.backup.EnsureRepoReadable()
+			return fmt.Errorf("creating pgBackRest stanza: %w\n%s", err, out)
 		}
-		return fmt.Errorf("creating pgBackRest stanza: %w\n%s", err, out)
+	} else {
+		fmt.Println("→ pgBackRest stanza created")
 	}
-	fmt.Println("→ pgBackRest stanza created")
+
+	// Make sure repo files are readable by the postgres user during archive-get.
+	if err := m.backup.EnsureRepoReadable(); err != nil {
+		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
+	}
 	return nil
 }
 
@@ -85,7 +91,13 @@ func (m *Manager) CreateSnapshot(comment, backupType string) (*Snapshot, error) 
 	fmt.Printf("→ Creating %s backup...\n", backupType)
 	out, err := m.pgbackrest(args...)
 	if err != nil {
+		_ = m.backup.EnsureRepoReadable()
 		return nil, fmt.Errorf("creating backup: %w\n%s", err, out)
+	}
+
+	// Make sure repo files are readable by the postgres user during archive-get/recovery.
+	if err := m.backup.EnsureRepoReadable(); err != nil {
+		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
 	}
 
 	// Parse backup label
@@ -163,12 +175,11 @@ func (m *Manager) DeleteBefore(before time.Time) error {
 // targetTime specifies the recovery target time.
 // Restore process:
 // 1. Stop PostgreSQL container
-// 2. pgBackRest restore (backup container connects to PG container via SSH as postgres)
-// 3. Ensure file ownership is correct (defensive chown in PG container)
-// 4. Start PostgreSQL container
+// 2. pgBackRest restore in a temporary container mounting the same data directory
+// 3. Start PostgreSQL container
 func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
 	stanza := m.cfg.PITR.PgBackRestStanza
-	targetStr := targetTime.Format("2006-01-02 15:04:05")
+	targetStr := targetTime.Format("2006-01-02 15:04:05-07")
 
 	if dryRun {
 		fmt.Printf("→ [DRY RUN] Would restore to: %s\n", targetStr)
@@ -176,34 +187,29 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
 	}
 
 	fmt.Printf("⚠️  Restoring PostgreSQL to %s\n", targetStr)
-	fmt.Println("  1/4 Stopping PostgreSQL...")
+
+	// Ensure repo is readable by postgres user during recovery archive-get.
+	if err := m.backup.EnsureRepoReadable(); err != nil {
+		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
+	}
+
+	fmt.Println("  1/3 Stopping PostgreSQL...")
 	if err := m.podman.StopContainer(); err != nil {
 		return fmt.Errorf("stopping container: %w", err)
 	}
 
-	fmt.Println("  2/4 Running pgBackRest restore...")
-	args := []string{
-		"--stanza=" + stanza,
-		"restore",
-		"--type=time",
-		"--target=" + targetStr,
-		"--target-action=promote",
-		"--delta",
-		"--log-level-console=info",
-	}
-	out, err := m.pgbackrest(args...)
+	fmt.Println("  2/3 Running pgBackRest restore...")
+	out, err := m.podman.RunRestoreContainer(stanza, targetStr)
 	if err != nil {
 		return fmt.Errorf("pgBackRest restore: %w\n%s", err, out)
 	}
 
-	fmt.Println("  3/4 Ensuring file ownership...")
-	// pgBackRest restore connects to the PG container via SSH as postgres.
-	// Restored files should already be owned by postgres; keep a defensive chown.
-	if _, err := m.podman.Exec("chown", "-R", "postgres:postgres", "/var/lib/postgresql/data"); err != nil {
-		fmt.Printf("  ⚠ chown warning: %v\n", err)
+	// Restore may create repo files owned by root; make them readable again.
+	if err := m.backup.EnsureRepoReadable(); err != nil {
+		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
 	}
 
-	fmt.Println("  4/4 Starting PostgreSQL...")
+	fmt.Println("  3/3 Starting PostgreSQL...")
 	if err := m.podman.StartContainer(); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
