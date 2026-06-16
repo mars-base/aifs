@@ -45,3 +45,11 @@ fi
 echo ""
 echo "✓ aifs ${TAG} installed to ${INSTALL_DIR}/${BIN}"
 echo "  Run: aifs version"
+
+# Pull the small helper image used by `aifs destroy --clean-data` to remove
+# rootless-podman data directories that contain subordinate-UID files.
+if command -v podman >/dev/null 2>&1; then
+	echo ""
+	echo "→ Pulling helper image (alpine:3.20) for destroy --clean-data..."
+	podman pull docker.io/library/alpine:3.20 >/dev/null 2>&1 || echo "  ⚠️  optional helper image pull failed, will retry on first use"
+fi
