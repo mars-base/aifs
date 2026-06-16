@@ -46,10 +46,13 @@ echo ""
 echo "✓ aifs ${TAG} installed to ${INSTALL_DIR}/${BIN}"
 echo "  Run: aifs version"
 
-# Pull the small helper image used by `aifs destroy --clean-data` to remove
-# rootless-podman data directories that contain subordinate-UID files.
+# Pull container images that aifs uses by default so the first start does not
+# have to wait for downloads. These are the default tags from aifs config;
+# custom image tags will be pulled on demand by aifs start.
 if command -v podman >/dev/null 2>&1; then
 	echo ""
-	echo "→ Pulling helper image (alpine:3.20) for destroy --clean-data..."
+	echo "→ Pulling aifs container images..."
+	podman pull ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0 >/dev/null 2>&1 || echo "  ⚠️  aifs-pg pull failed, will retry on first use"
+	podman pull ghcr.io/mars-base/aifs/aifs-backup:2.58.0 >/dev/null 2>&1 || echo "  ⚠️  aifs-backup pull failed, will retry on first use"
 	podman pull docker.io/library/alpine:3.20 >/dev/null 2>&1 || echo "  ⚠️  optional helper image pull failed, will retry on first use"
 fi
