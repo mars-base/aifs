@@ -70,7 +70,7 @@ aifs restore -i default --time "2026-06-15 22:30:00+08"
 ```
 
 You can also omit the timezone offset, in which case the time is interpreted
-as local time:
+as **UTC**:
 
 ```bash
 aifs restore -i default --time "2026-06-15 14:30:00"
