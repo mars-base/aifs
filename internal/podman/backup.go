@@ -1,6 +1,10 @@
 package podman
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +16,7 @@ import (
 	"github.com/mars-base/aifs/internal/config"
 	"github.com/mars-base/aifs/internal/platform"
 	res "github.com/mars-base/aifs/embed"
+	"golang.org/x/crypto/ssh"
 )
 
 // BackupManager manages the shared pgbackrest backup container.
@@ -34,6 +39,112 @@ func NewBackupManager(cfg *config.Config) (*BackupManager, error) {
 		podman:  path,
 		dataDir: platform.DefaultConfigDir(),
 	}, nil
+}
+
+// SSHKeyPair is the on-disk path pair for the backup container SSH key.
+type SSHKeyPair struct {
+	Private string
+	Public  string
+}
+
+// SSHKeyPaths returns the host paths to the backup SSH key pair.
+func (m *BackupManager) SSHKeyPaths() SSHKeyPair {
+	return SSHKeyPair{
+		Private: filepath.Join(m.dataDir, "backup", "id_rsa"),
+		Public:  filepath.Join(m.dataDir, "backup", "id_rsa.pub"),
+	}
+}
+
+// SSHConfigPath returns the host path to the backup container's SSH client config.
+func (m *BackupManager) SSHConfigPath() string {
+	return filepath.Join(m.dataDir, "backup", "ssh_config")
+}
+
+// WriteSSHConfig writes an SSH client config that disables host key checking
+// for PG containers inside the podman network.
+func (m *BackupManager) WriteSSHConfig() (string, error) {
+	conf := `Host aifs-pg-*
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    IdentityFile /root/.ssh/id_rsa
+    User postgres
+    Port 22
+`
+	path := m.SSHConfigPath()
+	if err := os.WriteFile(path, []byte(conf), 0644); err != nil {
+		return "", fmt.Errorf("writing ssh config: %w", err)
+	}
+	return path, nil
+}
+
+func (m *BackupManager) EnsureSSHKey() (*SSHKeyPair, error) {
+	keys := m.SSHKeyPaths()
+	if err := os.MkdirAll(filepath.Dir(keys.Private), 0700); err != nil {
+		return nil, fmt.Errorf("creating backup ssh directory: %w", err)
+	}
+
+	if _, err := os.Stat(keys.Private); err == nil {
+		return &keys, nil
+	}
+
+	fmt.Println("→ Generating backup container SSH key pair...")
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("generating rsa key: %w", err)
+	}
+
+	privFile, err := os.OpenFile(keys.Private, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("creating private key file: %w", err)
+	}
+	defer privFile.Close()
+
+	privPEM := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}
+	if err := pem.Encode(privFile, privPEM); err != nil {
+		return nil, fmt.Errorf("writing private key: %w", err)
+	}
+
+	pub, err := sshPublicKey(&priv.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("formatting public key: %w", err)
+	}
+	if err := os.WriteFile(keys.Public, []byte(pub), 0644); err != nil {
+		return nil, fmt.Errorf("writing public key: %w", err)
+	}
+
+	fmt.Println("  ✓ SSH key pair generated")
+	return &keys, nil
+}
+
+// sshPublicKey returns an authorized_keys line for the given RSA public key.
+func sshPublicKey(pub *rsa.PublicKey) (string, error) {
+	pk, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pk))), nil
+}
+
+// AuthorizeKeyOnContainer installs the backup public key into a PG container.
+func (m *BackupManager) AuthorizeKeyOnContainer(containerName string) error {
+	keys := m.SSHKeyPaths()
+	pub, err := os.ReadFile(keys.Public)
+	if err != nil {
+		return fmt.Errorf("reading public key: %w", err)
+	}
+
+	// Write authorized_keys file via exec, then ensure correct ownership/permissions.
+	cmd := fmt.Sprintf("mkdir -p /etc/ssh/authorized_keys && echo '%s' > /etc/ssh/authorized_keys/postgres && chown postgres:postgres /etc/ssh/authorized_keys/postgres && chmod 600 /etc/ssh/authorized_keys/postgres", strings.TrimSpace(string(pub)))
+	podmanArgs := []string{"exec", "-u", "root", containerName, "sh", "-c", cmd}
+	if _, err := execWithTimeout(m.podman, podmanArgs, 30*time.Second); err != nil {
+		return fmt.Errorf("installing authorized_keys on %s: %w", containerName, err)
+	}
+	return nil
+}
+
+// AuthorizeKeyOnInstance is a convenience wrapper for the currently selected instance.
+func (m *BackupManager) AuthorizeKeyOnInstance() error {
+	return m.AuthorizeKeyOnContainer(m.cfg.Podman.ContainerName)
 }
 
 // ─── Image management ─────────────────────────────────────────────
@@ -155,17 +266,15 @@ func (m *BackupManager) WritePgbackrestConf() (string, error) {
 			stanza = "aifs_" + name
 		}
 
-		// PG container name for inter-container DNS on the bridge network
-		pgContainer := inst.Podman.ContainerName
-		if pgContainer == "" {
-			pgContainer = "aifs-pg-" + name
-		}
-
+		// pgbackrest runs from the backup container and connects to each PG
+		// container via SSH (pg1-host). The PG container runs sshd as root
+		// and accepts the backup container's public key for the postgres user.
 		sb.WriteString("[")
 		sb.WriteString(stanza)
 		sb.WriteString("]\n")
-		fmt.Fprintf(&sb, "pg1-host=%s\n", pgContainer)
-		fmt.Fprintf(&sb, "pg1-path=/var/lib/postgresql/data\n\n")
+		fmt.Fprintf(&sb, "pg1-host=%s\n", inst.Podman.ContainerName)
+		fmt.Fprintf(&sb, "pg1-path=/var/lib/postgresql/data\n")
+		fmt.Fprintf(&sb, "pg1-user=postgres\n\n")
 	}
 
 	// Global section
@@ -188,8 +297,9 @@ func (m *BackupManager) WritePgbackrestConf() (string, error) {
 // ─── Container management ─────────────────────────────────────────────
 
 // EnsureBackupContainer creates and starts the backup container if it doesn't exist.
+// hostEntries maps PG container hostnames to IPs for /etc/hosts injection.
 // Caller is responsible for calling EnsureNetwork() first.
-func (m *BackupManager) EnsureBackupContainer(confPath string) error {
+func (m *BackupManager) EnsureBackupContainer(confPath string, hostEntries map[string]string) error {
 	containerName := m.cfg.Backup.ContainerName
 
 	exists, err := m.containerExists(containerName)
@@ -199,7 +309,7 @@ func (m *BackupManager) EnsureBackupContainer(confPath string) error {
 
 	if !exists {
 		fmt.Println("→ Creating and starting backup container...")
-		return m.createBackupContainer(confPath)
+		return m.createBackupContainer(confPath, hostEntries)
 	}
 
 	running, err := m.containerRunning(containerName)
@@ -265,7 +375,7 @@ func (m *BackupManager) CheckContainerRunning(name string) (bool, error) {
 
 // BackupExec runs a command inside the backup container.
 func (m *BackupManager) BackupExec(args ...string) (string, error) {
-	podmanArgs := append([]string{"exec", m.cfg.Backup.ContainerName}, args...)
+	podmanArgs := append([]string{"exec", "-i=false", m.cfg.Backup.ContainerName}, args...)
 	return execWithTimeout(m.podman, podmanArgs, 30*time.Second)
 }
 
@@ -327,25 +437,36 @@ func (m *BackupManager) containerRunning(name string) (bool, error) {
 	return strings.TrimSpace(out) == name, nil
 }
 
-func (m *BackupManager) createBackupContainer(confPath string) error {
+func (m *BackupManager) createBackupContainer(confPath string, hostEntries map[string]string) error {
+	keys := m.SSHKeyPaths()
+
+	// Ensure SSH config is written before mounting.
+	sshConfPath, err := m.WriteSSHConfig()
+	if err != nil {
+		return err
+	}
+
 	args := []string{
 		"run", "-d",
 		"--name", m.cfg.Backup.ContainerName,
 		"--network", m.cfg.Podman.Network,
+	}
+
+	// Add /etc/hosts entries for PG containers so pgbackrest can resolve pg1-host.
+	// Required when the rootless podman network backend does not provide DNS.
+	for hostname, ip := range hostEntries {
+		args = append(args, "--add-host", fmt.Sprintf("%s:%s", hostname, ip))
+	}
+
+	args = append(args,
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", m.cfg.Backup.DataDir),
 		"-v", fmt.Sprintf("%s:/var/log/pgbackrest", m.cfg.Backup.LogDir),
 		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", confPath),
-	}
-
-	// Mount WAL directories for each PITR-enabled instance
-	for name, inst := range m.cfg.Instances {
-		if !inst.PITR.Enabled {
-			continue
-		}
-		args = append(args, "-v", fmt.Sprintf("%s:/wal/%s:ro", inst.Podman.WALDir, name))
-	}
-
-	args = append(args, m.cfg.Backup.ImageTag)
+		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa:ro", keys.Private),
+		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa.pub:ro", keys.Public),
+		"-v", fmt.Sprintf("%s:/root/.ssh/config:ro", sshConfPath),
+		m.cfg.Backup.ImageTag,
+	)
 
 	if _, err := m.run(args...); err != nil {
 		return fmt.Errorf("creating backup container: %w", err)

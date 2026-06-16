@@ -5,11 +5,11 @@ package podman
 import (
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mars-base/aifs/internal/config"
@@ -130,6 +130,9 @@ func (m *Manager) buildImage(tag string) error {
 	if err := os.WriteFile(filepath.Join(buildDir, "init.sh"), []byte(res.InitShell), 0644); err != nil {
 		return fmt.Errorf("writing init.sh: %w", err)
 	}
+	if err := os.WriteFile(filepath.Join(buildDir, "pg-entrypoint.sh"), []byte(res.PGEntrypointShell), 0644); err != nil {
+		return fmt.Errorf("writing pg-entrypoint.sh: %w", err)
+	}
 
 	if err := m.runInteractive("build", "-t", tag, "-f", containerfile, buildDir); err != nil {
 		return fmt.Errorf("podman build: %w", err)
@@ -196,7 +199,14 @@ func (m *Manager) EnsureDirs() error {
 		}
 		fmt.Printf("→ Data directory ensured: %s\n", dir)
 	}
+
 	return nil
+}
+
+// DataDir returns the host path for the actual PGDATA directory
+// (<DataDir>/data, since <DataDir> is mounted at /var/lib/postgresql).
+func (m *Manager) PGHostDataDir() string {
+	return filepath.Join(m.cfg.Podman.DataDir, "data")
 }
 
 // ─── Container management ─────────────────────────────────────────────
@@ -282,7 +292,7 @@ func (m *Manager) Status() (*ContainerStatus, error) {
 
 // Exec runs a command inside the container, returns stdout.
 func (m *Manager) Exec(args ...string) (string, error) {
-	podmanArgs := append([]string{"exec", m.cfg.Podman.ContainerName}, args...)
+	podmanArgs := append([]string{"exec", "-i=false", m.cfg.Podman.ContainerName}, args...)
 	return execWithTimeout(m.podman, podmanArgs, 30*time.Second)
 }
 
@@ -299,16 +309,31 @@ func (m *Manager) Destroy() error {
 	return nil
 }
 
-// PGIsReady checks if PostgreSQL is accepting connections via TCP.
-// Uses a direct TCP connection instead of podman exec to avoid podman hang issues.
+// PGIsReady checks if PostgreSQL is accepting connections and has finished
+// initialization by running pg_isready against the host-mapped port.
 func (m *Manager) PGIsReady() (bool, error) {
-	addr := fmt.Sprintf("127.0.0.1:%d", m.cfg.Podman.HostPort)
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	if err != nil {
+	cmd := exec.Command("pg_isready",
+		"-h", "127.0.0.1",
+		"-p", fmt.Sprintf("%d", m.cfg.Podman.HostPort),
+		"-U", m.cfg.Postgres.User,
+	)
+	if err := cmd.Run(); err != nil {
 		return false, nil
 	}
-	conn.Close()
 	return true, nil
+}
+
+// ContainerIP returns the IP address of the managed container on the configured network.
+func (m *Manager) ContainerIP() (string, error) {
+	out, err := m.run("inspect", m.cfg.Podman.ContainerName, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
+	if err != nil {
+		return "", fmt.Errorf("inspecting container IP: %w", err)
+	}
+	ip := strings.TrimSpace(out)
+	if ip == "" {
+		return "", fmt.Errorf("container %s has no IP address", m.cfg.Podman.ContainerName)
+	}
+	return ip, nil
 }
 
 // ─── Internal methods ─────────────────────────────────────────────
@@ -394,6 +419,7 @@ func (m *Manager) createContainer() error {
 		"-e", fmt.Sprintf("POSTGRES_USER=%s", m.cfg.Postgres.User),
 		"-e", fmt.Sprintf("POSTGRES_PASSWORD=%s", m.cfg.Postgres.Password),
 		"-e", fmt.Sprintf("PGBACKREST_STANZA=%s", m.cfg.PITR.PgBackRestStanza),
+			"-e", "PGDATA=/var/lib/postgresql/data",
 		m.cfg.Podman.ImageTag,
 	}
 	if _, err := m.run(args...); err != nil {
@@ -409,12 +435,13 @@ func (m *Manager) writeInstancePgbackrestConf() (string, error) {
 	stanza := m.cfg.PITR.PgBackRestStanza
 	content := fmt.Sprintf(`[%s]
 pg1-path=/var/lib/postgresql/data
+pg1-user=%s
 
 [global]
 repo1-path=/var/lib/pgbackrest
 repo1-retention-full=%d
 log-level-console=info
-`, stanza, m.cfg.Backup.RetentionFull)
+`, stanza, m.cfg.Postgres.User, m.cfg.Backup.RetentionFull)
 
 	confPath := filepath.Join(m.dataDir, fmt.Sprintf("pgbackrest-%s.conf", m.cfg.Podman.ContainerName))
 	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
@@ -424,10 +451,16 @@ log-level-console=info
 }
 
 // execWithTimeout runs podman with a goroutine+channel timeout.
+// Uses cmd.Run() with explicit buffers instead of cmd.Output() because
+// cmd.Output()'s prefixSuffixSaver can cause pipe hangs with podman exec.
 // Explicitly kills the process on timeout, works cross-platform.
 func execWithTimeout(podmanPath string, args []string, timeout time.Duration) (string, error) {
 	slog.Debug("execWithTimeout", "args", args)
 	cmd := exec.Command(podmanPath, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	type result struct {
 		out string
@@ -436,21 +469,31 @@ func execWithTimeout(podmanPath string, args []string, timeout time.Duration) (s
 	done := make(chan result, 1)
 
 	go func() {
-		out, err := cmd.Output()
-		done <- result{string(out), err}
+		err := cmd.Run()
+		out := stdout.String()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				errMsg := stderr.String()
+				if errMsg == "" {
+					errMsg = out
+				}
+				done <- result{"", fmt.Errorf("podman %s: %s", strings.Join(args, " "), errMsg)}
+				return
+			}
+			done <- result{"", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)}
+			return
+		}
+		done <- result{out, nil}
 	}()
 
 	select {
 	case r := <-done:
 		if r.err != nil {
-			if exitErr, ok := r.err.(*exec.ExitError); ok {
-				return "", fmt.Errorf("podman %s: %s", strings.Join(args, " "), string(exitErr.Stderr))
-			}
-			return "", fmt.Errorf("podman %s: %w", strings.Join(args, " "), r.err)
+			return "", r.err
 		}
 		return r.out, nil
 	case <-time.After(timeout):
-		cmd.Process.Kill()
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return "", fmt.Errorf("podman %s timed out after %v", strings.Join(args, " "), timeout)
 	}
 }

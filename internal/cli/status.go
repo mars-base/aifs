@@ -26,6 +26,10 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		bm, err := newBackupManager()
+		if err != nil {
+			return err
+		}
 
 		fmt.Println("=== aifs status ===")
 		fmt.Printf("Instance: %s\n", cfg.Instance)
@@ -46,6 +50,7 @@ var statusCmd = &cobra.Command{
 			ready, _ := pm.PGIsReady()
 			if ready {
 				fmt.Println("\nPostgreSQL: ✓ accepting connections")
+				fmt.Printf("  Connection: %s\n", cfg.GetPostgresURL())
 			} else {
 				fmt.Println("\nPostgreSQL: ✗ not accepting connections")
 			}
@@ -53,7 +58,7 @@ var statusCmd = &cobra.Command{
 
 		// Backup info (when PITR enabled)
 		if cfg.PITR.Enabled && cs.Running {
-			pt := pitr.New(cfg, pm)
+			pt := pitr.New(cfg, pm, bm)
 
 			type backupResult struct {
 				snapshots []pitr.Snapshot

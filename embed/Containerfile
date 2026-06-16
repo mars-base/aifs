@@ -1,7 +1,23 @@
 FROM docker.io/library/postgres:18
 
-RUN apt-get update && apt-get install -y pgbackrest \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y pgbackrest openssh-server sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd /home/postgres/.ssh \
+    && chmod 700 /home/postgres/.ssh \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && echo 'AuthorizedKeysFile /etc/ssh/authorized_keys/%u' >> /etc/ssh/sshd_config \
+    && mkdir -p /etc/ssh/authorized_keys \
+    && echo 'postgres ALL=(root) NOPASSWD: /usr/bin/pgbackrest' > /etc/sudoers.d/postgres-pgbackrest \
+    && chmod 440 /etc/sudoers.d/postgres-pgbackrest
 
 COPY init.sh /docker-entrypoint-initdb.d/01-aifs.sh
 RUN chmod +x /docker-entrypoint-initdb.d/01-aifs.sh
+
+# Run sshd alongside PostgreSQL via a wrapper entrypoint.
+COPY pg-entrypoint.sh /usr/local/bin/pg-entrypoint.sh
+RUN chmod +x /usr/local/bin/pg-entrypoint.sh
+
+ENTRYPOINT ["pg-entrypoint.sh"]
+CMD ["postgres"]

@@ -58,7 +58,12 @@ Examples:
 			return err
 		}
 
-		pt := pitr.New(cfg, pm)
+		bm, err := newBackupManager()
+		if err != nil {
+			return err
+		}
+
+		pt := pitr.New(cfg, pm, bm)
 
 		// dry-run mode
 		if restoreDryRun {

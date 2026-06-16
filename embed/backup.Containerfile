@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y curl ca-certificates gnupg \
        gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt trixie-pgdg main" \
        > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update && apt-get install -y pgbackrest \
+    && apt-get update && apt-get install -y pgbackrest openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/lib/pgbackrest /var/log/pgbackrest /etc/pgbackrest
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -75,9 +76,69 @@ Steps:
 			return err
 		}
 
-		// 8. Initialize pgBackRest stanza
+		// Wait for PostgreSQL to finish initialization (initdb + init scripts).
+		fmt.Println("→ Waiting for PostgreSQL to be ready...")
+		for i := 0; i < 60; i++ {
+			if ready, _ := pm.PGIsReady(); ready {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+
+		// 8. Initialize pgBackRest stanza (via backup container)
 		if cfg.PITR.Enabled {
-			pt := pitr.New(cfg, pm)
+			bm, err := newBackupManager()
+			if err != nil {
+				return fmt.Errorf("creating backup manager: %w", err)
+			}
+
+			// Ensure backup SSH key exists before authorizing it on the PG container.
+			if _, err := bm.EnsureSSHKey(); err != nil {
+				return fmt.Errorf("backup ssh key: %w", err)
+			}
+
+			// Install backup public key into the PG container so pgbackrest can SSH in.
+			fmt.Println("→ Authorizing backup key on PostgreSQL container...")
+			if err := bm.AuthorizeKeyOnInstance(); err != nil {
+				return fmt.Errorf("authorizing backup key: %w", err)
+			}
+
+			// Ensure backup infrastructure is ready
+			if err := bm.EnsureNetwork(); err != nil {
+				return fmt.Errorf("backup network: %w", err)
+			}
+			if err := bm.EnsureBackupImage(); err != nil {
+				return fmt.Errorf("backup image: %w", err)
+			}
+			if err := bm.EnsureBackupDirs(); err != nil {
+				return fmt.Errorf("backup dirs: %w", err)
+			}
+			confPath, err := bm.WritePgbackrestConf()
+			if err != nil {
+				return fmt.Errorf("backup config: %w", err)
+			}
+			// Collect IP addresses of all PITR-enabled PG containers for /etc/hosts.
+			hostEntries := make(map[string]string)
+			for name, inst := range cfg.Instances {
+				if !inst.PITR.Enabled {
+					continue
+				}
+				ipm, err := newPodmanForInstance(name)
+				if err != nil {
+					return fmt.Errorf("creating podman manager for %s: %w", name, err)
+				}
+				ip, err := ipm.ContainerIP()
+				if err != nil {
+					return fmt.Errorf("getting IP for %s: %w", name, err)
+				}
+				hostEntries[inst.Podman.ContainerName] = ip
+			}
+
+			if err := bm.EnsureBackupContainer(confPath, hostEntries); err != nil {
+				return fmt.Errorf("backup container: %w", err)
+			}
+
+			pt := pitr.New(cfg, pm, bm)
 			if err := pt.EnsureStanza(); err != nil {
 				fmt.Printf("  ⚠ stanza create warning: %v\n", err)
 			}

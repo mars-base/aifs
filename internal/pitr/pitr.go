@@ -1,6 +1,6 @@
-// // Package pitr implements core PITR (Point-In-Time Recovery) features:
+// Package pitr implements core PITR (Point-In-Time Recovery) features:
 // snapshot create/list/delete, point-in-time restore, branch clone.
-// All operations are executed via pgBackRest inside the PostgreSQL container.
+// pgBackRest operations are executed inside the shared backup container via BackupExec.
 package pitr
 
 import (
@@ -22,15 +22,18 @@ type Snapshot struct {
 	Comment   string    `json:"comment"`   // Backup comment
 }
 
-// Manager encapsulates PITR operations, executing pgBackRest commands via Podman.
+// Manager encapsulates PITR operations.
+// pgBackRest commands run in the shared backup container (via BackupManager),
+// while PG container lifecycle (stop/start) uses the podman Manager.
 type Manager struct {
 	cfg    *config.Config
-	podman *podman.Manager
+	podman *podman.Manager       // PG container lifecycle
+	backup *podman.BackupManager // pgBackRest operations (in backup container)
 }
 
 // New creates a PITR manager.
-func New(cfg *config.Config, pm *podman.Manager) *Manager {
-	return &Manager{cfg: cfg, podman: pm}
+func New(cfg *config.Config, pm *podman.Manager, bm *podman.BackupManager) *Manager {
+	return &Manager{cfg: cfg, podman: pm, backup: bm}
 }
 
 // ─── Stanza management ──────────────────────────────────────────
@@ -74,6 +77,7 @@ func (m *Manager) CreateSnapshot(comment, backupType string) (*Snapshot, error) 
 	stanza := m.cfg.PITR.PgBackRestStanza
 	args := []string{
 		"--stanza=" + stanza,
+		"backup",
 		"--type=" + backupType,
 		"--log-level-console=info",
 	}
@@ -159,8 +163,9 @@ func (m *Manager) DeleteBefore(before time.Time) error {
 // targetTime specifies the recovery target time.
 // Restore process:
 // 1. Stop PostgreSQL container
-// 2. pgBackRest restore
-// 3. Start PostgreSQL container
+// 2. pgBackRest restore (backup container connects to PG container via SSH as postgres)
+// 3. Ensure file ownership is correct (defensive chown in PG container)
+// 4. Start PostgreSQL container
 func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
 	stanza := m.cfg.PITR.PgBackRestStanza
 	targetStr := targetTime.Format("2006-01-02 15:04:05")
@@ -171,12 +176,12 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
 	}
 
 	fmt.Printf("⚠️  Restoring PostgreSQL to %s\n", targetStr)
-	fmt.Println("  1/3 Stopping PostgreSQL...")
+	fmt.Println("  1/4 Stopping PostgreSQL...")
 	if err := m.podman.StopContainer(); err != nil {
 		return fmt.Errorf("stopping container: %w", err)
 	}
 
-	fmt.Println("  2/3 Running pgBackRest restore...")
+	fmt.Println("  2/4 Running pgBackRest restore...")
 	args := []string{
 		"--stanza=" + stanza,
 		"restore",
@@ -191,7 +196,14 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
 		return fmt.Errorf("pgBackRest restore: %w\n%s", err, out)
 	}
 
-	fmt.Println("  3/3 Starting PostgreSQL...")
+	fmt.Println("  3/4 Ensuring file ownership...")
+	// pgBackRest restore connects to the PG container via SSH as postgres.
+	// Restored files should already be owned by postgres; keep a defensive chown.
+	if _, err := m.podman.Exec("chown", "-R", "postgres:postgres", "/var/lib/postgresql/data"); err != nil {
+		fmt.Printf("  ⚠ chown warning: %v\n", err)
+	}
+
+	fmt.Println("  4/4 Starting PostgreSQL...")
 	if err := m.podman.StartContainer(); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
@@ -204,18 +216,20 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
 
 func (m *Manager) pgbackrest(args ...string) (string, error) {
 	slog.Debug("pgbackrest", "args", args)
-	return m.podman.Exec(append([]string{"pgbackrest"}, args...)...)
+	return m.backup.BackupExec(append([]string{"pgbackrest"}, args...)...)
 }
 
 // extractLabel extracts the backup label from pgBackRest output.
 func extractLabel(out string) string {
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "backup") && strings.Contains(line, "complete") {
-			// Format: "full backup: 20260614-143005F"
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"full backup:", "incr backup:", "diff backup:"} {
+			if name, ok := strings.CutPrefix(line, prefix); ok {
+				return strings.TrimSpace(name)
 			}
+		}
+		if _, after, ok := strings.Cut(line, "new backup label ="); ok {
+			return strings.TrimSpace(after)
 		}
 	}
 	return ""
@@ -227,11 +241,11 @@ func parseInfoOutput(out string) []Snapshot {
 
 	// pgbackrest info output format example:
 	// full backup: 20260614-143005F
-	//     timestamp: 2026-06-14 14:30:05
-	//     size: 1.2GB
+	//     timestamp start/stop: 2026-06-14 14:30:05+00 / 2026-06-14 14:30:10+00
+	//     database size: 30MB, database backup size: 30MB
 	//
 	// incr backup: 20260614-150010I
-	//     timestamp: 2026-06-14 15:00:10
+	//     timestamp start/stop: 2026-06-14 15:00:10+00 / 2026-06-14 15:00:15+00
 	//     ...
 	var current *Snapshot
 
@@ -240,8 +254,8 @@ func parseInfoOutput(out string) []Snapshot {
 
 		// Detect backup line
 		for _, bt := range []string{"full backup:", "incr backup:", "diff backup:"} {
-			if strings.HasPrefix(line, bt) {
-				name := strings.TrimSpace(strings.TrimPrefix(line, bt))
+			if name, ok := strings.CutPrefix(line, bt); ok {
+				name = strings.TrimSpace(name)
 				current = &Snapshot{
 					Name: name,
 					Type: strings.TrimSuffix(bt, " backup:"),
@@ -255,13 +269,17 @@ func parseInfoOutput(out string) []Snapshot {
 			continue
 		}
 
-		// Parse timestamp
-		if strings.HasPrefix(line, "timestamp:") {
-			ts := strings.TrimSpace(strings.TrimPrefix(line, "timestamp:"))
-			if t, err := time.Parse("2006-01-02 15:04:05", ts); err == nil {
-				current.Timestamp = t
-				// Update value in slice
-				snapshots[len(snapshots)-1].Timestamp = t
+		// Parse timestamp. pgbackrest info uses "timestamp start/stop: <start> / <stop>"
+		if ts, ok := strings.CutPrefix(line, "timestamp start/stop:"); ok {
+			// ts is " <start>+00 / <stop>+00"
+			parts := strings.SplitN(ts, " / ", 2)
+			if len(parts) > 0 {
+				start := strings.TrimSpace(parts[0])
+				if t, err := time.Parse("2006-01-02 15:04:05Z07", start); err == nil {
+					current.Timestamp = t
+					// Update value in slice
+					snapshots[len(snapshots)-1].Timestamp = t
+				}
 			}
 		}
 	}

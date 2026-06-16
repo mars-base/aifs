@@ -49,8 +49,14 @@ Backup types:
 			return err
 		}
 
-		pt := pitr.New(cfg, pm)
+		bm, err := newBackupManager()
+		if err != nil {
+			return err
+		}
 
+		pt := pitr.New(cfg, pm, bm)
+
+		fmt.Println("→ Note: database backups may take a long time, do not interrupt the task")
 		snap, err := pt.CreateSnapshot(snapComment, snapType)
 		if err != nil {
 			return err
@@ -80,7 +86,12 @@ var snapshotListCmd = &cobra.Command{
 			return err
 		}
 
-		pt := pitr.New(cfg, pm)
+		bm, err := newBackupManager()
+		if err != nil {
+			return err
+		}
+
+		pt := pitr.New(cfg, pm, bm)
 
 		snapshots, err := pt.ListSnapshots(snapLimit)
 		if err != nil {
@@ -119,7 +130,12 @@ var snapshotDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		pt := pitr.New(cfg, pm)
+		bm, err := newBackupManager()
+		if err != nil {
+			return err
+		}
+
+		pt := pitr.New(cfg, pm, bm)
 
 		if err := pt.DeleteSnapshot(args[0]); err != nil {
 			return err

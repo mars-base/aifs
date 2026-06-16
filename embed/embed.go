@@ -17,3 +17,9 @@ var BackupContainerfile string
 //
 //go:embed init.sh
 var InitShell string
+
+// PGEntrypointShell is the wrapper entrypoint that starts sshd then runs the
+// official postgres entrypoint.
+//
+//go:embed pg-entrypoint.sh
+var PGEntrypointShell string
