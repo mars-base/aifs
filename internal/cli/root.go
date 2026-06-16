@@ -23,8 +23,8 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "aifs",
 	Short: "AI-native filesystem with PITR powered by JuiceFS + PostgreSQL",
-	Long: `aifs is a CLI tool that combines JuiceFS + PostgreSQL as an AI Agent filesystem.
-Leverages PostgreSQL PITR (Point-In-Time Recovery) to rollback the filesystem to any historical moment.`,
+	Long: `aifs is a CLI tool that gives AI Agents a "time machine" filesystem.
+Leverages PITR (Point-In-Time Recovery) to rollback the filesystem to any historical moment.`,
 	SilenceUsage: true,
 }
 
