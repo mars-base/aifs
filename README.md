@@ -2,7 +2,7 @@
 
 A database filesystem built for AI Agents — give your agents a time machine.
 
-AI agents are powerful but unpredictable: they can delete files, corrupt data, or make mistakes that are hard to undo. `aifs` solves this with **PITR (Point-In-Time Recovery)**, letting you rewind the entire filesystem to any moment in time. Agents can work fearlessly, knowing nothing is ever truly lost.
+AI agents are powerful but unpredictable: they can delete files, corrupt data, or make mistakes that are hard to undo. `aifs` solves this with **PITR (Point-In-Time Recovery)** powered by **PostgreSQL**, letting you rewind the entire filesystem to any moment in time. Agents can work fearlessly, knowing nothing is ever truly lost.
 
 ## Why aifs
 
@@ -41,7 +41,7 @@ irm https://github.com/mars-base/aifs/releases/latest/download/install.ps1 | iex
 # 1. Initialize config (with a default instance)
 aifs config init --add default
 
-# 2. Start PostgreSQL
+# 2. Start PostgreSQL + pgBackRest backup container
 aifs start -i default
 
 # 3. Check status
@@ -53,9 +53,26 @@ aifs snapshot create --type full --comment "before-agent-run"
 # 5. Agent does its work...
 
 # 6. If something goes wrong, rewind
-aifs restore --time "2026-06-15 14:30:00"
+aifs restore -i default --time "2026-06-15 14:30:00"
 
 # 7. Everything is back — nothing lost
+```
+
+## Snapshot types
+
+`aifs snapshot create` supports three pgBackRest backup types:
+
+| Type | Description | Use case |
+|------|-------------|----------|
+| `full` | Full database backup | Baseline, run periodically (e.g. weekly) |
+| `diff` | Changes since the last `full` | Daily backups, simpler restore chain than `incr` |
+| `incr` | Changes since the last backup of any type | Smallest/fastest, but restore requires the full chain |
+
+**Recommended schedule**: `full` weekly + `diff` daily. This balances storage, backup speed, and restore reliability.
+
+```bash
+aifs snapshot create --type full
+aifs snapshot create --type diff
 ```
 
 ## Config file
@@ -93,17 +110,6 @@ instances:
       enabled: true
       pgbackrest_stanza: "aifs_default"
 ```
-
-## Container images
-
-Images are pulled from registry first, with automatic fallback to local build:
-
-| Image | Tag | Description |
-|-------|-----|-------------|
-| `aifs-pg` | `ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0` | PostgreSQL 18 + pgBackRest |
-| `aifs-backup` | `ghcr.io/mars-base/aifs/aifs-backup:2.58.0` | Debian + pgBackRest (dedicated backup) |
-
-Both containers communicate over the `aifs-net` bridge network, using container names as DNS hostnames.
 
 ## Build from source
 
