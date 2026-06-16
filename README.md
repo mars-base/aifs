@@ -33,14 +33,12 @@ On Windows you need to complete **two steps**:
 `aifs-setup.ps1` checks CPU virtualization, enables WSL2, installs Podman, and initializes a podman machine. The first run may enable Windows features that require a reboot:
 
 ```powershell
-# Default: no proxy (direct connection)
-powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/aifs-setup.ps1 | iex
 
-# Use a custom proxy
-powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1 -Proxy http://proxy.example.com:8080
-
-# Explicitly disable proxy (same as default)
-powershell -ExecutionPolicy Bypass -File scripts/aifs-setup.ps1 -Proxy none
+# With a proxy
+$env:HTTPS_PROXY="http://proxy.example.com:8080"
+irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/aifs-setup.ps1 | iex
 ```
 
 If the script reports a reboot is required, restart the machine and then **run the same command again**. Repeat until the script prints the "Setup Complete" / environment-ready message. After that, proceed to install `aifs`.
