@@ -21,6 +21,7 @@ type Config struct {
 	PITR       PITRConfig                `yaml:"pitr"`
 	Logging    LoggingConfig             `yaml:"logging"`
 	Backup     BackupConfig              `yaml:"backup"`
+	Filesystem FilesystemConfig          `yaml:"filesystem"`
 	Instances  map[string]InstanceConfig `yaml:"instances"`
 
 	Instance string `yaml:"-"` // current instance name (set at runtime, not persisted)
@@ -28,9 +29,10 @@ type Config struct {
 
 // InstanceConfig is the configuration for a single database instance.
 type InstanceConfig struct {
-	Postgres PostgresConfig `yaml:"postgres"`
-	Podman   PodmanConfig   `yaml:"podman"`
-	PITR     PITRConfig     `yaml:"pitr"`
+	Postgres   PostgresConfig   `yaml:"postgres"`
+	Podman     PodmanConfig     `yaml:"podman"`
+	PITR       PITRConfig       `yaml:"pitr"`
+	Filesystem FilesystemConfig `yaml:"filesystem"`
 }
 
 // PostgresConfig holds PostgreSQL connection settings.
@@ -72,6 +74,13 @@ type BackupConfig struct {
 	RetentionFull int    `yaml:"retention_full"`  // number of full backups to retain, default 7
 }
 
+// FilesystemConfig holds PG-backed filesystem settings.
+type FilesystemConfig struct {
+	VolumeName  string `yaml:"volume_name,omitempty"`  // volume name, default <instance>
+	MountPoint  string `yaml:"mount_point,omitempty"`  // optional default mount point
+	TablePrefix string `yaml:"table_prefix,omitempty"` // table prefix, default "aifs_"
+}
+
 // Default returns a Config populated with default values.
 func Default() *Config {
 	return &Config{
@@ -103,6 +112,9 @@ func Default() *Config {
 			LogDir:        filepath.Join(platform.DefaultConfigDir(), "backup", "log"),
 			RetentionFull: 7,
 		},
+		Filesystem: FilesystemConfig{
+			TablePrefix: "aifs_",
+		},
 		Instances: make(map[string]InstanceConfig),
 	}
 }
@@ -132,6 +144,10 @@ func (c *Config) InstanceDefaults(name string) *InstanceConfig {
 		PITR: PITRConfig{
 			Enabled:          true,
 			PgBackRestStanza: "aifs_" + name,
+		},
+		Filesystem: FilesystemConfig{
+			VolumeName:  name,
+			TablePrefix: "aifs_",
 		},
 	}
 }
@@ -188,6 +204,17 @@ func (c *Config) SetInstance(name string) error {
 		c.PITR.PgBackRestStanza = inst.PITR.PgBackRestStanza
 	}
 
+	// Merge Filesystem config
+	if inst.Filesystem.VolumeName != "" {
+		c.Filesystem.VolumeName = inst.Filesystem.VolumeName
+	}
+	if inst.Filesystem.MountPoint != "" {
+		c.Filesystem.MountPoint = inst.Filesystem.MountPoint
+	}
+	if inst.Filesystem.TablePrefix != "" {
+		c.Filesystem.TablePrefix = inst.Filesystem.TablePrefix
+	}
+
 	return nil
 }
 
@@ -214,21 +241,23 @@ func Load(path string) (*Config, error) {
 // displayConfig is the serializable subset of Config for save/display.
 // Global postgres/podman/pitr are excluded — they are in-memory defaults only.
 type displayConfig struct {
-	BaseDir   string                    `yaml:"base_dir,omitempty"`
-	Network   string                    `yaml:"network,omitempty"`
-	Logging   LoggingConfig             `yaml:"logging"`
-	Backup    BackupConfig              `yaml:"backup"`
-	Instances map[string]InstanceConfig `yaml:"instances"`
+	BaseDir    string                    `yaml:"base_dir,omitempty"`
+	Network    string                    `yaml:"network,omitempty"`
+	Logging    LoggingConfig             `yaml:"logging"`
+	Backup     BackupConfig              `yaml:"backup"`
+	Filesystem FilesystemConfig          `yaml:"filesystem,omitempty"`
+	Instances  map[string]InstanceConfig `yaml:"instances"`
 }
 
 // Display returns a view of the config suitable for display or saving.
 func (c *Config) Display() displayConfig {
 	return displayConfig{
-		BaseDir:   c.BaseDir,
-		Network:   c.Podman.Network,
-		Logging:   c.Logging,
-		Backup:    c.Backup,
-		Instances: c.Instances,
+		BaseDir:    c.BaseDir,
+		Network:    c.Podman.Network,
+		Logging:    c.Logging,
+		Backup:     c.Backup,
+		Filesystem: c.Filesystem,
+		Instances:  c.Instances,
 	}
 }
 
@@ -268,6 +297,18 @@ func (c *Config) GetPostgresURL() string {
 		c.Postgres.User, c.Postgres.Password,
 		c.Postgres.Host, c.Postgres.Port,
 		c.Postgres.Database)
+}
+
+// EffectiveFilesystem returns the effective filesystem configuration with defaults applied.
+func (c *Config) EffectiveFilesystem() FilesystemConfig {
+	fs := c.Filesystem
+	if fs.TablePrefix == "" {
+		fs.TablePrefix = "aifs_"
+	}
+	if fs.VolumeName == "" {
+		fs.VolumeName = c.Instance
+	}
+	return fs
 }
 
 // applyDefaults fills zero-value fields with their defaults.
@@ -336,6 +377,11 @@ func (c *Config) applyDefaults() {
 		c.Backup.RetentionFull = d.Backup.RetentionFull
 	}
 
+	// Filesystem
+	if c.Filesystem.TablePrefix == "" {
+		c.Filesystem.TablePrefix = d.Filesystem.TablePrefix
+	}
+
 	// Instances: apply per-instance defaults
 	if c.Instances == nil {
 		c.Instances = make(map[string]InstanceConfig)
@@ -371,6 +417,15 @@ func (c *Config) applyDefaults() {
 		}
 		if inst.PITR.PgBackRestStanza == "" {
 			inst.PITR.PgBackRestStanza = def.PITR.PgBackRestStanza
+		}
+		if inst.Filesystem.VolumeName == "" {
+			inst.Filesystem.VolumeName = def.Filesystem.VolumeName
+		}
+		if inst.Filesystem.TablePrefix == "" {
+			inst.Filesystem.TablePrefix = c.Filesystem.TablePrefix
+			if inst.Filesystem.TablePrefix == "" {
+				inst.Filesystem.TablePrefix = def.Filesystem.TablePrefix
+			}
 		}
 		c.Instances[name] = inst
 	}

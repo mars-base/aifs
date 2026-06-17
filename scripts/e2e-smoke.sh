@@ -93,52 +93,78 @@ echo "=== 8. status ==="
 "$AIFS_BIN" status -i "$INSTANCE"
 
 echo ""
-echo "=== 9. backup status ==="
+echo "=== 9. format filesystem ==="
+"$AIFS_BIN" format -i "$INSTANCE" --volume "$INSTANCE"
+
+MOUNT_POINT="/tmp/aifs-smoke-${INSTANCE}-mnt"
+mkdir -p "$MOUNT_POINT"
+
+echo ""
+echo "=== 10. mount filesystem ==="
+"$AIFS_BIN" mount -i "$INSTANCE" "$MOUNT_POINT" -d
+sleep 2
+
+echo ""
+echo "=== 11. filesystem smoke (write/read/mkdir/symlink) ==="
+echo "hello aifs" > "$MOUNT_POINT/hello.txt"
+mkdir "$MOUNT_POINT/subdir"
+ln -s hello.txt "$MOUNT_POINT/hello-link"
+[[ "$(cat "$MOUNT_POINT/hello.txt")" == "hello aifs" ]]
+[[ -d "$MOUNT_POINT/subdir" ]]
+[[ -L "$MOUNT_POINT/hello-link" ]]
+echo "  ✓ filesystem operations passed"
+
+echo ""
+echo "=== 12. umount filesystem ==="
+"$AIFS_BIN" umount "$MOUNT_POINT"
+
+echo ""
+echo "=== 13. backup status ==="
 "$AIFS_BIN" backup status
 
 echo ""
-echo "=== 10. create test table and insert data ==="
+echo "=== 14. create test table and insert data ==="
 podman exec "$CONTAINER" psql -U aifs -d "$DB" -c "DROP TABLE IF EXISTS smoke_test;" >/dev/null
 podman exec "$CONTAINER" psql -U aifs -d "$DB" -c "CREATE TABLE smoke_test(id serial primary key, note text);" >/dev/null
 podman exec "$CONTAINER" psql -U aifs -d "$DB" -c "INSERT INTO smoke_test(note) VALUES ('before-snapshot');" >/dev/null
 echo "  ✓ inserted 1 row"
 
 echo ""
-echo "=== 11. snapshot create (full, tail-logs) ==="
+echo "=== 15. snapshot create (full, tail-logs) ==="
 "$AIFS_BIN" snapshot create -i "$INSTANCE" --tail-logs --comment "e2e smoke full"
 
 echo ""
-echo "=== 12. snapshot list ==="
+echo "=== 16. snapshot list ==="
 "$AIFS_BIN" snapshot list -i "$INSTANCE"
 
 echo ""
-echo "=== 13. stop ${INSTANCE} ==="
+echo "=== 17. stop ${INSTANCE} ==="
 "$AIFS_BIN" stop -i "$INSTANCE"
 
 echo ""
-echo "=== 14. restart ${INSTANCE} ==="
+echo "=== 18. restart ${INSTANCE} ==="
 "$AIFS_BIN" start -i "$INSTANCE"
 
 echo ""
-echo "=== 15. status after restart ==="
+echo "=== 19. status after restart ==="
 "$AIFS_BIN" status -i "$INSTANCE"
 
 echo ""
-echo "=== 16. snapshot after restart (incr, tail-logs) ==="
+echo "=== 20. snapshot after restart (incr, tail-logs) ==="
 "$AIFS_BIN" snapshot create -i "$INSTANCE" --type incr --tail-logs --comment "e2e smoke incr"
 
 echo ""
-echo "=== 17. destroy ${INSTANCE} (with clean-data) ==="
+echo "=== 21. destroy ${INSTANCE} (with clean-data) ==="
 "$AIFS_BIN" destroy -i "$INSTANCE" --clean-data --force || {
     echo "  ⚠ destroy --clean-data returned an error, will force-cleanup at the end"
 }
 
 echo ""
-echo "=== 18. stop backup container ==="
+echo "=== 22. stop backup container ==="
 "$AIFS_BIN" backup stop
 
 echo ""
-echo "=== 19. final cleanup ==="
+echo "=== 23. final cleanup ==="
 cleanup_containers
 cleanup_home
 
