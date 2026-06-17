@@ -19,7 +19,6 @@ type Snapshot struct {
 	Timestamp time.Time `json:"timestamp"` // Backup time
 	Type      string    `json:"type"`      // full / incr / diff
 	Size      int64     `json:"size"`      // Backup size (bytes)
-	Comment   string    `json:"comment"`   // Backup comment
 }
 
 // Manager encapsulates PITR operations.
@@ -76,7 +75,7 @@ func (m *Manager) CheckStanza() error {
 // CreateSnapshot creates a backup snapshot.
 // backupType: "full" (default), "incr", "diff"
 // tailLogs streams the backup container output to stdout during the backup.
-func (m *Manager) CreateSnapshot(comment, backupType string, tailLogs bool) (*Snapshot, error) {
+func (m *Manager) CreateSnapshot(backupType string, tailLogs bool) (*Snapshot, error) {
 	if backupType == "" {
 		backupType = "full"
 	}
@@ -107,7 +106,6 @@ func (m *Manager) CreateSnapshot(comment, backupType string, tailLogs bool) (*Sn
 		Name:      label,
 		Timestamp: time.Now(),
 		Type:      backupType,
-		Comment:   comment,
 	}
 	fmt.Printf("  ✓ Snapshot created: %s (%s)\n", label, backupType)
 	return snap, nil

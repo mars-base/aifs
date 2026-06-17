@@ -22,7 +22,6 @@ var snapshotCmd = &cobra.Command{
 }
 
 var (
-	snapComment  string
 	snapType     string
 	snapLimit    int
 	snapTailLogs bool
@@ -31,15 +30,14 @@ var (
 var snapshotCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new snapshot",
-	Long: `Create a pgBackRest backup snapshot.
+	Long: `Create a PostgreSQL backup snapshot.
 
 Backup types:
   full  - Full backup (default)
   incr  - Incremental backup (changes since last backup)
   diff  - Differential backup (changes since last full backup)`,
 	Example: `  aifs snapshot create
-  aifs snapshot create --comment "after-training"
-  aifs snapshot create --type incr --comment "incremental backup"`,
+  aifs snapshot create --type incr`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadConfig(); err != nil {
 			return err
@@ -64,7 +62,7 @@ Backup types:
 		pt := pitr.New(cfg, pm, bm)
 
 		fmt.Println("→ Note: database backups may take a long time, do not interrupt the task")
-		snap, err := pt.CreateSnapshot(snapComment, snapType, snapTailLogs)
+		snap, err := pt.CreateSnapshot(snapType, snapTailLogs)
 		if err != nil {
 			return err
 		}
@@ -154,7 +152,6 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	snapshotCreateCmd.Flags().StringVar(&snapComment, "comment", "", "Snapshot comment")
 	snapshotCreateCmd.Flags().StringVar(&snapType, "type", "full", "Backup type: full, incr, diff")
 	snapshotCreateCmd.Flags().BoolVar(&snapTailLogs, "tail-logs", false, "Stream backup container logs to stdout during snapshot")
 
