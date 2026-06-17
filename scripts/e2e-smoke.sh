@@ -32,8 +32,8 @@ AIFS_HOME="${HOME}/.aifs"
 
 cleanup_containers() {
     echo "→ Stopping and removing existing aifs containers/networks..."
-    podman stop -t 5 aifs-pg-default aifs-pg-proj01 aifs-pg-proj03 aifs-backup 2>/dev/null || true
-    podman rm -f aifs-pg-default aifs-pg-proj01 aifs-pg-proj03 aifs-backup 2>/dev/null || true
+    podman stop -t 5 aifs-pg-default aifs-backup 2>/dev/null || true
+    podman rm -f aifs-pg-default aifs-backup 2>/dev/null || true
     podman network rm -f aifs-net 2>/dev/null || true
 }
 
