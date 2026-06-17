@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/mars-base/aifs/internal/pgfs/meta"
 	"github.com/mars-base/aifs/internal/pgfs/object"
 )
