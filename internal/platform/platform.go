@@ -122,38 +122,6 @@ func MissingPrereqs() []DepStatus {
 
 // --- Default paths ---
 
-// DefaultMountPoint returns the default filesystem mount point.
-func DefaultMountPoint() string {
-	switch Detect() {
-	case Linux:
-		return "/mnt/aifs"
-	case MacOS:
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "aifs")
-	case Windows:
-		return "Z:\\aifs"
-	default:
-		return "/mnt/aifs"
-	}
-}
-
-// DefaultCacheDir returns the default filesystem cache directory.
-func DefaultCacheDir() string {
-	switch Detect() {
-	case Linux:
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".aifs", "cache")
-	case MacOS:
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "Library", "Caches", "aifs")
-	case Windows:
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "aifs", "cache")
-	default:
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".aifs", "cache")
-	}
-}
-
 // DefaultConfigDir returns the aifs configuration directory.
 func DefaultConfigDir() string {
 	home, _ := os.UserHomeDir()

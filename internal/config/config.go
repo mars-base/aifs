@@ -14,15 +14,14 @@ import (
 
 // Config is the complete aifs configuration.
 type Config struct {
-	BaseDir    string                     `yaml:"base_dir,omitempty"`
-	Network    string                     `yaml:"network,omitempty"` // shared podman network name, persisted at top level
-	Postgres   PostgresConfig             `yaml:"postgres"`
-	Filesystem FilesystemConfig           `yaml:"filesystem"`
-	Podman     PodmanConfig               `yaml:"podman"`
-	PITR       PITRConfig                 `yaml:"pitr"`
-	Logging    LoggingConfig              `yaml:"logging"`
-	Backup     BackupConfig               `yaml:"backup"`
-	Instances  map[string]InstanceConfig  `yaml:"instances"`
+	BaseDir    string                    `yaml:"base_dir,omitempty"`
+	Network    string                    `yaml:"network,omitempty"` // shared podman network name, persisted at top level
+	Postgres   PostgresConfig            `yaml:"postgres"`
+	Podman     PodmanConfig              `yaml:"podman"`
+	PITR       PITRConfig                `yaml:"pitr"`
+	Logging    LoggingConfig             `yaml:"logging"`
+	Backup     BackupConfig              `yaml:"backup"`
+	Instances  map[string]InstanceConfig `yaml:"instances"`
 
 	Instance string `yaml:"-"` // current instance name (set at runtime, not persisted)
 }
@@ -42,14 +41,6 @@ type PostgresConfig struct {
 	User     string `yaml:"user"`      // user, default aifs
 	Password string `yaml:"password"`  // password, default aifs
 	Database string `yaml:"database"`  // database name, default aifs
-}
-
-// FilesystemConfig holds filesystem settings.
-type FilesystemConfig struct {
-	Name         string `yaml:"name"`          // filesystem name
-	MountPoint   string `yaml:"mount_point"`   // mount point, "auto" uses platform default
-	CacheDir     string `yaml:"cache_dir"`     // cache directory, "auto" uses platform default
-	CacheSizeMB  int    `yaml:"cache_size_mb"` // cache size in MiB, default 10240
 }
 
 // PodmanConfig holds Podman container settings.
@@ -91,12 +82,6 @@ func Default() *Config {
 			User:     "aifs",
 			Password: "aifs",
 			Database: "aifs",
-		},
-		Filesystem: FilesystemConfig{
-			Name:        "aifs",
-			MountPoint:  "auto",
-			CacheDir:    "auto",
-			CacheSizeMB: 10240,
 		},
 		Podman: PodmanConfig{
 			ContainerName: "aifs-pg",
@@ -229,23 +214,21 @@ func Load(path string) (*Config, error) {
 // displayConfig is the serializable subset of Config for save/display.
 // Global postgres/podman/pitr are excluded — they are in-memory defaults only.
 type displayConfig struct {
-	BaseDir    string                     `yaml:"base_dir,omitempty"`
-	Network    string                     `yaml:"network,omitempty"`
-	Filesystem FilesystemConfig           `yaml:"filesystem"`
-	Logging    LoggingConfig              `yaml:"logging"`
-	Backup     BackupConfig               `yaml:"backup"`
-	Instances  map[string]InstanceConfig  `yaml:"instances"`
+	BaseDir   string                    `yaml:"base_dir,omitempty"`
+	Network   string                    `yaml:"network,omitempty"`
+	Logging   LoggingConfig             `yaml:"logging"`
+	Backup    BackupConfig              `yaml:"backup"`
+	Instances map[string]InstanceConfig `yaml:"instances"`
 }
 
 // Display returns a view of the config suitable for display or saving.
 func (c *Config) Display() displayConfig {
 	return displayConfig{
-		BaseDir:    c.BaseDir,
-		Network:    c.Podman.Network,
-		Filesystem: c.Filesystem,
-		Logging:    c.Logging,
-		Backup:     c.Backup,
-		Instances:  c.Instances,
+		BaseDir:   c.BaseDir,
+		Network:   c.Podman.Network,
+		Logging:   c.Logging,
+		Backup:    c.Backup,
+		Instances: c.Instances,
 	}
 }
 
@@ -267,9 +250,6 @@ func (c *Config) Save(path string) error {
 
 // Validate checks that the configuration is complete.
 func (c *Config) Validate() error {
-	if c.Filesystem.Name == "" {
-		return fmt.Errorf("filesystem.name must not be empty")
-	}
 	if c.Podman.ContainerName == "" {
 		return fmt.Errorf("podman.container_name must not be empty")
 	}
@@ -288,22 +268,6 @@ func (c *Config) GetPostgresURL() string {
 		c.Postgres.User, c.Postgres.Password,
 		c.Postgres.Host, c.Postgres.Port,
 		c.Postgres.Database)
-}
-
-// GetMountPoint returns the effective mount point ("auto" resolves to platform default).
-func (c *Config) GetMountPoint() string {
-	if c.Filesystem.MountPoint == "auto" {
-		return platform.DefaultMountPoint()
-	}
-	return c.Filesystem.MountPoint
-}
-
-// GetCacheDir returns the effective cache directory ("auto" resolves to platform default).
-func (c *Config) GetCacheDir() string {
-	if c.Filesystem.CacheDir == "auto" {
-		return platform.DefaultCacheDir()
-	}
-	return c.Filesystem.CacheDir
 }
 
 // applyDefaults fills zero-value fields with their defaults.
@@ -325,20 +289,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Postgres.Database == "" {
 		c.Postgres.Database = d.Postgres.Database
-	}
-
-	// Filesystem
-	if c.Filesystem.Name == "" {
-		c.Filesystem.Name = d.Filesystem.Name
-	}
-	if c.Filesystem.MountPoint == "" {
-		c.Filesystem.MountPoint = d.Filesystem.MountPoint
-	}
-	if c.Filesystem.CacheDir == "" {
-		c.Filesystem.CacheDir = d.Filesystem.CacheDir
-	}
-	if c.Filesystem.CacheSizeMB == 0 {
-		c.Filesystem.CacheSizeMB = d.Filesystem.CacheSizeMB
 	}
 
 	// Podman
