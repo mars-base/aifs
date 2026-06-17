@@ -59,6 +59,13 @@ Backup types:
 			return err
 		}
 
+		// Re-authorize the backup SSH key on the PG container. The authorized_keys
+		// file lives inside the container and is lost if the container is recreated,
+		// so we ensure it is installed before every backup operation.
+		if err := bm.AuthorizeKeyOnInstance(); err != nil {
+			return fmt.Errorf("authorizing backup key: %w", err)
+		}
+
 		pt := pitr.New(cfg, pm, bm)
 
 		fmt.Println("→ Note: database backups may take a long time, do not interrupt the task")
