@@ -40,9 +40,13 @@ func New(cfg *config.Config) (*Manager, error) {
 
 // ─── Machine management ─────────────────────────────────────────
 
-// EnsureMachine ensures podman machine is initialized and running (macOS/Windows only).
-// No-op on Linux.
+// EnsureMachine ensures the runtime is ready for podman containers.
+// On macOS this initializes/starts the podman machine; on Windows it starts
+// the WSL podman API service; on Linux it is a no-op.
 func (m *Manager) EnsureMachine() error {
+	if platform.Detect() == platform.Windows {
+		return EnsurePodmanService()
+	}
 	if !platform.NeedsPodmanMachine() {
 		return nil // Linux: no machine needed
 	}
@@ -372,7 +376,7 @@ func removeHostDir(podmanPath, dir string) error {
 	}
 
 	cmd := exec.Command(podmanPath, "run", "--rm",
-		"-v", fmt.Sprintf("%s:/target", parent),
+		"-v", fmt.Sprintf("%s:/target", hostMountPath(parent)),
 		"alpine:3.20", "sh", "-c", fmt.Sprintf("rm -rf /target/%s", base),
 	)
 	if err := cmd.Run(); err != nil {
@@ -421,9 +425,9 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 	args := []string{
 		"run", "--rm",
 		"--network", m.cfg.Podman.Network,
-		"-v", fmt.Sprintf("%s:/var/lib/postgresql", m.cfg.Podman.DataDir),
-		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", m.cfg.Backup.DataDir),
-		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", confPath),
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", hostMountPath(m.cfg.Podman.DataDir)),
+		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(m.cfg.Backup.DataDir)),
+		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
 		m.cfg.Podman.ImageTag,
 		"pgbackrest", "--stanza=" + stanza, "restore",
 		"--type=time", "--target=" + target,
@@ -512,9 +516,9 @@ func (m *Manager) createContainer() error {
 		"--name", m.cfg.Podman.ContainerName,
 		"--network", m.cfg.Podman.Network,
 		"-p", fmt.Sprintf("%d:5432", hostPort),
-		"-v", fmt.Sprintf("%s:/var/lib/postgresql", m.cfg.Podman.DataDir),
-		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", backupVol),
-		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", confPath),
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", hostMountPath(m.cfg.Podman.DataDir)),
+		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(backupVol)),
+		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
 		"-e", fmt.Sprintf("POSTGRES_DB=%s", m.cfg.Postgres.Database),
 		"-e", fmt.Sprintf("POSTGRES_USER=%s", m.cfg.Postgres.User),
 		"-e", fmt.Sprintf("POSTGRES_PASSWORD=%s", m.cfg.Postgres.Password),
@@ -535,7 +539,7 @@ func (m *Manager) createContainer() error {
 			return fmt.Errorf("ensuring backup ssh key: %w", err)
 		}
 		args = append(args,
-			"-v", fmt.Sprintf("%s:/run/aifs/backup_id_rsa.pub:ro", keys.Public),
+			"-v", fmt.Sprintf("%s:/run/aifs/backup_id_rsa.pub:ro", hostMountPath(keys.Public)),
 		)
 	}
 

@@ -250,30 +250,6 @@ func (m *BackupManager) EnsureBackupDirs() error {
 	return nil
 }
 
-// EnsureRepoReadable recursively ensures the backup repository is readable by
-// other users. This is required because the PostgreSQL container runs archive-get
-// as the postgres user (different host UID than the backup container root).
-func (m *BackupManager) EnsureRepoReadable() error {
-	repoDir := m.cfg.Backup.DataDir
-	if repoDir == "" {
-		return nil
-	}
-
-	if err := os.Chmod(repoDir, 0755); err != nil {
-		return fmt.Errorf("chmod backup repo %s: %w", repoDir, err)
-	}
-
-	return filepath.Walk(repoDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return os.Chmod(path, info.Mode()|0555)
-		}
-		return os.Chmod(path, info.Mode()|0444)
-	})
-}
-
 // EnsureBackupInfra prepares the shared backup infrastructure:
 // network, image, directories, config, and container with current PG container IPs.
 func (m *BackupManager) EnsureBackupInfra() error {
@@ -583,12 +559,12 @@ func (m *BackupManager) createBackupContainer(confPath string, hostEntries map[s
 	}
 
 	args = append(args,
-		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", m.cfg.Backup.DataDir),
-		"-v", fmt.Sprintf("%s:/var/log/pgbackrest", m.cfg.Backup.LogDir),
-		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", confPath),
-		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa:ro", keys.Private),
-		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa.pub:ro", keys.Public),
-		"-v", fmt.Sprintf("%s:/root/.ssh/config:ro", sshConfPath),
+		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(m.cfg.Backup.DataDir)),
+		"-v", fmt.Sprintf("%s:/var/log/pgbackrest", hostMountPath(m.cfg.Backup.LogDir)),
+		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
+		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa:ro", hostMountPath(keys.Private)),
+		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa.pub:ro", hostMountPath(keys.Public)),
+		"-v", fmt.Sprintf("%s:/root/.ssh/config:ro", hostMountPath(sshConfPath)),
 		m.cfg.Backup.ImageTag,
 	)
 

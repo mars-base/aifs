@@ -46,9 +46,10 @@ func Detect() OS {
 	}
 }
 
-// NeedsPodmanMachine returns whether podman machine is needed (macOS/Windows).
+// NeedsPodmanMachine returns whether podman machine is needed (macOS only).
+// Windows uses a WSL podman service instead; Linux uses native Podman.
 func NeedsPodmanMachine() bool {
-	return Detect() != Linux
+	return Detect() == MacOS
 }
 
 // --- Dependency checks ---
