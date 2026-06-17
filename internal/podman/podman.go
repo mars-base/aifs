@@ -574,6 +574,14 @@ func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Dur
 		err := cmd.Run()
 		out := stdoutBuf.String()
 		if err != nil {
+			// Podman may report a non-zero exit after `podman run --rm` because it
+			// tries to forward a terminal signal (e.g. SIGWINCH) to a container
+			// that has already been removed. If the actual command succeeded,
+			// treat this as success.
+			if isPodmanCleanupNoise(stderrBuf.String()) && strings.Contains(out, "completed successfully") {
+				done <- result{out, nil}
+				return
+			}
 			if _, ok := err.(*exec.ExitError); ok {
 				errMsg := stderrBuf.String()
 				if errMsg == "" {
@@ -598,6 +606,31 @@ func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Dur
 		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return "", fmt.Errorf("podman %s timed out after %v", strings.Join(args, " "), timeout)
 	}
+}
+
+// isPodmanCleanupNoise reports whether stderr only contains podman cleanup
+// messages after a container has already exited. This happens when podman
+// receives a terminal signal (e.g. SIGWINCH) while removing a `run --rm`
+// container and tries to forward it to the now-gone container.
+func isPodmanCleanupNoise(stderr string) bool {
+	if stderr == "" {
+		return false
+	}
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "forwarding signal") &&
+			(strings.Contains(line, "no such container") || strings.Contains(line, "container has already been removed")) {
+			continue
+		}
+		if strings.Contains(line, "container has already been removed") {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // execWithTimeout runs podman with a goroutine+channel timeout.
