@@ -104,38 +104,9 @@ Steps:
 			}
 
 			// Ensure backup infrastructure is ready
-			if err := bm.EnsureNetwork(); err != nil {
-				return fmt.Errorf("backup network: %w", err)
-			}
-			if err := bm.EnsureBackupImage(); err != nil {
-				return fmt.Errorf("backup image: %w", err)
-			}
-			if err := bm.EnsureBackupDirs(); err != nil {
-				return fmt.Errorf("backup dirs: %w", err)
-			}
-			confPath, err := bm.WritePgbackrestConf()
-			if err != nil {
-				return fmt.Errorf("backup config: %w", err)
-			}
-			// Collect IP addresses of all PITR-enabled PG containers for /etc/hosts.
-			hostEntries := make(map[string]string)
-			for name, inst := range cfg.Instances {
-				if !inst.PITR.Enabled {
-					continue
-				}
-				ipm, err := newPodmanForInstance(name)
-				if err != nil {
-					return fmt.Errorf("creating podman manager for %s: %w", name, err)
-				}
-				ip, err := ipm.ContainerIP()
-				if err != nil {
-					return fmt.Errorf("getting IP for %s: %w", name, err)
-				}
-				hostEntries[inst.Podman.ContainerName] = ip
-			}
-
-			if err := bm.EnsureBackupContainer(confPath, hostEntries); err != nil {
-				return fmt.Errorf("backup container: %w", err)
+			fmt.Println("→ Ensuring backup infrastructure is ready...")
+			if err := bm.EnsureBackupInfra(); err != nil {
+				return fmt.Errorf("backup infrastructure: %w", err)
 			}
 
 			pt := pitr.New(cfg, pm, bm)

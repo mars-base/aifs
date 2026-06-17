@@ -55,6 +55,12 @@ Backup types:
 			return err
 		}
 
+		// Ensure backup container host entries are up to date (PG container IPs may
+		// have changed after stop/start/restore).
+		if err := bm.EnsureBackupInfra(); err != nil {
+			return err
+		}
+
 		pt := pitr.New(cfg, pm, bm)
 
 		fmt.Println("→ Note: database backups may take a long time, do not interrupt the task")

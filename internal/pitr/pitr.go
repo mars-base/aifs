@@ -216,6 +216,12 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 		return fmt.Errorf("starting container: %w", err)
 	}
 
+	// PG container IP may have changed; refresh backup container /etc/hosts so
+	// subsequent backups can reach it.
+	if err := m.backup.EnsureBackupInfra(); err != nil {
+		fmt.Printf("  ⚠ backup infra refresh warning: %v\n", err)
+	}
+
 	fmt.Println("✓ Restore complete")
 	return nil
 }

@@ -68,11 +68,3 @@ func newBackupManager() (*podman.BackupManager, error) {
 	return podman.NewBackupManager(cfg)
 }
 
-// newPodmanForInstance creates a Podman manager bound to a specific instance.
-func newPodmanForInstance(name string) (*podman.Manager, error) {
-	if err := cfg.SetInstance(name); err != nil {
-		return nil, err
-	}
-	return podman.New(cfg)
-}
-

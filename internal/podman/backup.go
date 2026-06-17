@@ -274,6 +274,52 @@ func (m *BackupManager) EnsureRepoReadable() error {
 	})
 }
 
+// EnsureBackupInfra prepares the shared backup infrastructure:
+// network, image, directories, config, and container with current PG container IPs.
+func (m *BackupManager) EnsureBackupInfra() error {
+	if err := m.EnsureNetwork(); err != nil {
+		return err
+	}
+	if err := m.EnsureBackupImage(); err != nil {
+		return err
+	}
+	if err := m.EnsureBackupDirs(); err != nil {
+		return err
+	}
+	confPath, err := m.WritePgbackrestConf()
+	if err != nil {
+		return err
+	}
+	hostEntries, err := m.collectPGContainerIPs()
+	if err != nil {
+		return err
+	}
+	return m.EnsureBackupContainer(confPath, hostEntries)
+}
+
+// collectPGContainerIPs returns the current IP addresses of all PITR-enabled
+// PG containers. Containers that do not exist are skipped.
+func (m *BackupManager) collectPGContainerIPs() (map[string]string, error) {
+	hostEntries := make(map[string]string)
+	for _, inst := range m.cfg.Instances {
+		if !inst.PITR.Enabled || inst.Podman.ContainerName == "" {
+			continue
+		}
+		out, err := exec.Command(m.podman, "inspect", inst.Podman.ContainerName,
+			"--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}").Output()
+		if err != nil {
+			// Container may not exist yet; skip it.
+			continue
+		}
+		ip := strings.TrimSpace(string(out))
+		if ip == "" {
+			continue
+		}
+		hostEntries[inst.Podman.ContainerName] = ip
+	}
+	return hostEntries, nil
+}
+
 // ─── pgbackrest.conf generation ──────────────────────────────────
 
 // WritePgbackrestConf generates pgbackrest.conf with all instance stanzas.
