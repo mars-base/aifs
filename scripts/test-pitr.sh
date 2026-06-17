@@ -4,6 +4,9 @@
 # Usage:
 #   ./scripts/test-pitr.sh [instance_name]
 #
+# Environment:
+#   AIFS_BIN    path to aifs binary (default: ./aifs)
+#
 # The script:
 #   1. Creates (or recreates) a PG instance
 #   2. Writes some initial rows
@@ -13,42 +16,41 @@
 #   6. Stops the writer and takes a final row count
 #   7. Restores the instance to the recorded target time
 #   8. Verifies the row count matches the count at the target time
-#
-# Requires: aifs binary at ./aifs (relative to repo root)
 
 set -euo pipefail
 
 INSTANCE="${1:-proj01}"
 CONTAINER="aifs-pg-${INSTANCE}"
 DB="${INSTANCE}_db"
-AIFS="./aifs"
+AIFS_BIN="${AIFS_BIN:-./aifs}"
 PRE_ROWS=10
 WRITE_SECONDS=40
 POST_SECONDS=30
 
 echo "=== aifs PITR end-to-end test ==="
 echo "Instance: ${INSTANCE}"
+echo "Binary:   ${AIFS_BIN}"
 echo ""
 
 cd "$(dirname "$0")/.."
 
-if [[ ! -x "$AIFS" ]]; then
-    echo "Error: $AIFS binary not found. Run: go build ./cmd/aifs/" >&2
+if [[ ! -x "$AIFS_BIN" ]]; then
+    echo "Error: $AIFS_BIN binary not found. Run: go build -o $AIFS_BIN ./cmd/aifs/" >&2
     exit 1
 fi
 
 cleanup_instance() {
     echo "→ Cleaning up instance ${INSTANCE} (if it exists)..."
-    "$AIFS" destroy -i "${INSTANCE}" --clean-data --force >/dev/null 2>&1 || true
+    "$AIFS_BIN" destroy -i "${INSTANCE}" --clean-data --force >/dev/null 2>&1 || true
 }
 
 cleanup_instance
 
 echo "→ Creating instance ${INSTANCE}..."
-"$AIFS" create -i "${INSTANCE}"
+"$AIFS_BIN" create -i "${INSTANCE}"
 
 echo "→ Starting instance ${INSTANCE}..."
-"$AIFS" start -i "${INSTANCE}"
+"$AIFS_BIN" start -i "${INSTANCE}"
 
 echo "→ Creating restore_test table..."
 podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -c "DROP TABLE IF EXISTS restore_test;" >/dev/null
@@ -60,7 +62,7 @@ for i in $(seq 1 "${PRE_ROWS}"); do
 done
 
 echo "→ Taking full backup..."
-"$AIFS" snapshot create -i "${INSTANCE}" --type full
+"$AIFS_BIN" snapshot create -i "${INSTANCE}" --type full
 
 echo "→ Starting background writer (1 row/sec)..."
 local_writer_script=$(cat <<'EOF'
@@ -92,7 +94,7 @@ FINAL_ROWS=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT co
 echo "  ${FINAL_ROWS}"
 
 echo "→ Restoring to ${TARGET_TIME_UTC}..."
-"$AIFS" restore -i "${INSTANCE}" --time "${TARGET_TIME_UTC}" --force
+"$AIFS_BIN" restore -i "${INSTANCE}" --time "${TARGET_TIME_UTC}" --force
 
 echo "→ Waiting for PostgreSQL to be ready..."
 sleep 5
