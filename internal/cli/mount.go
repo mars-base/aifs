@@ -148,8 +148,20 @@ func mountInBackground(mountPoint string) error {
 	}
 	args = append(args, "-i", cfgInstance, "mount", mountPoint)
 
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("opening /dev/null: %w", err)
+	}
+	defer devNull.Close()
+
+	logFile, err := os.CreateTemp("", "aifs-mount-*.log")
+	if err != nil {
+		return fmt.Errorf("creating mount log: %w", err)
+	}
+	defer logFile.Close()
+
 	attr := &os.ProcAttr{
-		Files: []*os.File{nil, os.Stdout, os.Stderr},
+		Files: []*os.File{devNull, logFile, logFile},
 		Sys:   &syscall.SysProcAttr{Setsid: true},
 	}
 	p, err := os.StartProcess(os.Args[0], args, attr)
@@ -162,11 +174,20 @@ func mountInBackground(mountPoint string) error {
 		time.Sleep(200 * time.Millisecond)
 		if mountVisible(mountPoint) {
 			fmt.Printf("background mount pid %d at %s\n", p.Pid, mountPoint)
+			_ = os.Remove(logFile.Name())
 			return nil
+		}
+		if err := p.Signal(syscall.Signal(0)); err != nil {
+			break
 		}
 	}
 	_ = p.Kill()
 	_, _ = p.Wait()
+	logOut, _ := os.ReadFile(logFile.Name())
+	_ = os.Remove(logFile.Name())
+	if len(logOut) > 0 {
+		return fmt.Errorf("background mount did not become ready: %s", logOut)
+	}
 	return fmt.Errorf("background mount did not become ready")
 }
 
