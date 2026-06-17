@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mars-base/aifs/internal/pgfs"
 	"github.com/mars-base/aifs/internal/pitr"
 )
 
@@ -69,6 +70,14 @@ Examples:
 			return fmt.Errorf("Invalid time format: %w (use: YYYY-MM-DD HH:MM:SS+00 or YYYY-MM-DD HH:MM:SS)", err)
 		}
 
+		mounted, err := pgfs.IsInstanceMounted(cmd.Context(), cfg.GetPostgresURL(), cfg.EffectiveFilesystem().TablePrefix)
+		if err != nil {
+			return fmt.Errorf("checking active mounts: %w", err)
+		}
+		if mounted {
+			return fmt.Errorf("instance %s has an active aifs mount; please run 'aifs umount <mountpoint>' before restore", cfg.Instance)
+		}
+
 		pm, err := newPodman()
 		if err != nil {
 			return err
@@ -77,6 +86,13 @@ Examples:
 		bm, err := newBackupManager()
 		if err != nil {
 			return err
+		}
+
+		// Re-authorize the backup SSH key on the PG container. The authorized_keys
+		// file lives inside the container and is lost if the container is recreated,
+		// so we ensure it is installed before every restore operation.
+		if err := bm.AuthorizeKeyOnInstance(); err != nil {
+			return fmt.Errorf("authorizing backup key: %w", err)
 		}
 
 		pt := pitr.New(cfg, pm, bm)

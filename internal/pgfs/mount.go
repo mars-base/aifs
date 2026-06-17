@@ -82,3 +82,32 @@ func Umount(mountPoint string) error {
 	fmt.Printf("unmounted %s\n", mountPoint)
 	return nil
 }
+
+// IsInstanceMounted reports whether another aifs mount is currently holding
+// the advisory lock for this PostgreSQL database.
+func IsInstanceMounted(ctx context.Context, pgURL, tablePrefix string) (bool, error) {
+	db, _, _, err := Open(ctx, pgURL, tablePrefix)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	lockConn, err := db.Conn(ctx)
+	if err != nil {
+		return false, fmt.Errorf("acquiring lock connection: %w", err)
+	}
+	defer lockConn.Close()
+
+	var locked bool
+	if err := lockConn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockKey).Scan(&locked); err != nil {
+		return false, fmt.Errorf("checking mount lock: %w", err)
+	}
+	if !locked {
+		// Another session holds the lock.
+		return true, nil
+	}
+
+	// We acquired the lock just to probe; release it immediately.
+	_, _ = lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", advisoryLockKey)
+	return false, nil
+}
