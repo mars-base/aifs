@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -126,7 +128,7 @@ onto a local directory. By default it runs in the foreground.`,
 		if mountBackground {
 			return mountInBackground(mountPoint)
 		}
-		return pgfs.Mount(cmd.Context(), cfg.GetPostgresURL(), fsCfg.TablePrefix, mountPoint)
+		return pgfs.Mount(cmd.Context(), cfg.GetPostgresURL(), fsCfg.TablePrefix, cfg.Podman.DataDir, mountPoint)
 	},
 }
 
@@ -155,13 +157,44 @@ func mountInBackground(mountPoint string) error {
 		return fmt.Errorf("starting background mount: %w", err)
 	}
 
-	// Wait briefly for the mount to become visible.
-	for i := 0; i < 10; i++ {
+	// Wait for the mount to become visible in /proc/self/mounts.
+	for i := 0; i < 30; i++ {
 		time.Sleep(200 * time.Millisecond)
-		if _, err := os.Stat(filepath.Join(mountPoint, ".")); err == nil {
+		if mountVisible(mountPoint) {
 			fmt.Printf("background mount pid %d at %s\n", p.Pid, mountPoint)
 			return nil
 		}
 	}
+	_ = p.Kill()
+	_, _ = p.Wait()
 	return fmt.Errorf("background mount did not become ready")
+}
+
+// mountVisible reports whether mountPoint is currently mounted as an aifs FUSE filesystem.
+func mountVisible(mountPoint string) bool {
+	f, err := os.Open("/proc/self/mounts")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	mp, err := filepath.Abs(mountPoint)
+	if err != nil {
+		mp = mountPoint
+	}
+
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		fields := strings.Fields(s.Text())
+		if len(fields) < 4 {
+			continue
+		}
+		if fields[0] == "aifs" && strings.HasPrefix(fields[2], "fuse") {
+			m, _ := filepath.Abs(fields[1])
+			if m == mp {
+				return true
+			}
+		}
+	}
+	return false
 }

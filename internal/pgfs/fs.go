@@ -7,6 +7,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"golang.org/x/sys/unix"
 
 	"github.com/mars-base/aifs/internal/pgfs/meta"
 )
@@ -14,28 +15,29 @@ import (
 // FSNode is a node in the PG-backed filesystem.
 type FSNode struct {
 	fs.Inode
-	m meta.MetadataStore
+	m        meta.MetadataStore
+	dataPath string
 }
 
 var (
-	_ fs.NodeLookuper      = (*FSNode)(nil)
-	_ fs.NodeGetattrer     = (*FSNode)(nil)
-	_ fs.NodeSetattrer     = (*FSNode)(nil)
-	_ fs.NodeOpener        = (*FSNode)(nil)
-	_ fs.NodeCreater       = (*FSNode)(nil)
-	_ fs.NodeMkdirer       = (*FSNode)(nil)
-	_ fs.NodeUnlinker      = (*FSNode)(nil)
-	_ fs.NodeRmdirer       = (*FSNode)(nil)
-	_ fs.NodeRenamer       = (*FSNode)(nil)
-	_ fs.NodeSymlinker     = (*FSNode)(nil)
-	_ fs.NodeReadlinker    = (*FSNode)(nil)
-	_ fs.NodeReaddirer     = (*FSNode)(nil)
-	_ fs.NodeStatfser      = (*FSNode)(nil)
+	_ fs.NodeLookuper   = (*FSNode)(nil)
+	_ fs.NodeGetattrer  = (*FSNode)(nil)
+	_ fs.NodeSetattrer  = (*FSNode)(nil)
+	_ fs.NodeOpener     = (*FSNode)(nil)
+	_ fs.NodeCreater    = (*FSNode)(nil)
+	_ fs.NodeMkdirer    = (*FSNode)(nil)
+	_ fs.NodeUnlinker   = (*FSNode)(nil)
+	_ fs.NodeRmdirer    = (*FSNode)(nil)
+	_ fs.NodeRenamer    = (*FSNode)(nil)
+	_ fs.NodeSymlinker  = (*FSNode)(nil)
+	_ fs.NodeReadlinker = (*FSNode)(nil)
+	_ fs.NodeReaddirer  = (*FSNode)(nil)
+	_ fs.NodeStatfser   = (*FSNode)(nil)
 )
 
 // NewRootNode creates the root inode backed by the metadata store.
-func NewRootNode(m meta.MetadataStore) (*FSNode, error) {
-	return &FSNode{m: m}, nil
+func NewRootNode(m meta.MetadataStore, dataPath string) (*FSNode, error) {
+	return &FSNode{m: m, dataPath: dataPath}, nil
 }
 
 func (n *FSNode) ino() uint64 {
@@ -189,6 +191,19 @@ func (n *FSNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 }
 
 func (n *FSNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
+	var st unix.Statfs_t
+	if err := unix.Statfs(n.dataPath, &st); err == nil && st.Blocks > 0 {
+		out.Bsize = uint32(st.Bsize)
+		out.Frsize = uint32(st.Bsize)
+		out.Blocks = st.Blocks
+		out.Bfree = st.Bfree
+		out.Bavail = st.Bavail
+		out.Files = st.Files
+		out.Ffree = st.Ffree
+		return fs.OK
+	}
+
+	// Fallback to a fixed-size virtual disk if the data path cannot be stat'd.
 	*out = fuse.StatfsOut{
 		Bsize:  4096,
 		Blocks: 1 << 30,
