@@ -12,8 +12,14 @@
 
 set -euo pipefail
 
-INSTANCE="${1:-default}"
+INSTANCE="${1:-fmtmnt}"
 AIFS_BIN="${AIFS_BIN:-./build/aifs}"
+
+# Use a unique backup container / network name so this test does not collide
+# with an existing aifs environment.
+SUFFIX="fmtmnt-$$"
+BACKUP_CONTAINER="aifs-backup-${SUFFIX}"
+NETWORK_NAME="aifs-net-${SUFFIX}"
 
 WORK_DIR="$(mktemp -d /tmp/aifs-fmt-mnt-XXXXXX)"
 CONFIG="${WORK_DIR}/config.yaml"
@@ -27,6 +33,14 @@ if [[ ! -x "$AIFS_BIN" ]]; then
     exit 1
 fi
 
+# Pick a free host port to avoid colliding with an existing aifs instance.
+find_free_port() {
+    python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()'
+}
+
+# Remove any leftover containers from a previous interrupted run.
+podman rm -f "aifs-pg-${INSTANCE}" "$BACKUP_CONTAINER" 2>/dev/null || true
+
 cleanup() {
     set +e
     echo ""
@@ -35,7 +49,8 @@ cleanup() {
         "$AIFS_BIN" -c "$CONFIG" umount "$MOUNT_POINT" 2>/dev/null || true
     fi
     "$AIFS_BIN" -c "$CONFIG" stop -i "$INSTANCE" 2>/dev/null || true
-    podman rm -f "aifs-pg-${INSTANCE}" aifs-backup 2>/dev/null || true
+    podman rm -f "aifs-pg-${INSTANCE}" "$BACKUP_CONTAINER" 2>/dev/null || true
+    podman network rm -f "$NETWORK_NAME" 2>/dev/null || true
     if command -v podman >/dev/null 2>&1; then
         podman unshare rm -rf "$WORK_DIR" 2>/dev/null || rm -rf "$WORK_DIR" 2>/dev/null || true
     else
@@ -44,13 +59,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
+FORCE_CLEAN="${FORCE_CLEAN:-0}"
+if [[ "$FORCE_CLEAN" != "1" ]]; then
+    echo "⚠️  This script will create an isolated aifs environment under ${WORK_DIR}."
+    echo "    It will be automatically cleaned up when the script exits."
+    read -rp "Continue? [y/N]: " ans
+    if [[ "$ans" != [yY]* ]]; then
+        echo "Cancelled"
+        exit 0
+    fi
+fi
+
 echo "=== aifs format/mount standalone smoke test ==="
-echo "Instance: ${INSTANCE}"
-echo "Work dir: ${WORK_DIR}"
+echo "Instance:       ${INSTANCE}"
+echo "Work dir:       ${WORK_DIR}"
+echo "Backup network: ${NETWORK_NAME}"
+echo "Backup container: ${BACKUP_CONTAINER}"
 echo ""
 
 echo "=== 1. config init ==="
 "$AIFS_BIN" config init -o "$CONFIG" --add "$INSTANCE" --base-dir "$WORK_DIR"
+
+# Isolate the backup container and network from any existing aifs environment.
+sed -i "s/^network: aifs-net$/network: ${NETWORK_NAME}/" "$CONFIG"
+sed -i "s/^\\( *container_name:\\) aifs-backup$/\\1 ${BACKUP_CONTAINER}/" "$CONFIG"
+
+# Assign a free host port so this test does not collide with an existing PG instance.
+HOST_PORT=$(find_free_port)
+sed -i "s/^\\( *host_port:\\) .*/\\1 ${HOST_PORT}/" "$CONFIG"
 
 echo ""
 echo "=== 2. start instance ==="

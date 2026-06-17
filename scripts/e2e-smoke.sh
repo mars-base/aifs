@@ -6,19 +6,29 @@
 #
 # Environment:
 #   AIFS_BIN    path to aifs binary (default: ./build/aifs)
-#   FORCE_CLEAN set to 1 to skip the destructive cleanup prompt
+#   FORCE_CLEAN set to 1 to skip the confirmation prompt
 #
-# The script tears down any existing aifs environment, then exercises:
+# The script uses an isolated work directory and config file. It exercises:
 #   config init / validate / show / create / list / destroy / start / status /
 #   backup status / snapshot create / list / stop / restart / final cleanup
 
 set -euo pipefail
 
-INSTANCE="${1:-default}"
+INSTANCE="${1:-smoke}"
 DB="${INSTANCE}_db"
 CONTAINER="aifs-pg-${INSTANCE}"
 AIFS_BIN="${AIFS_BIN:-./build/aifs}"
 FORCE_CLEAN="${FORCE_CLEAN:-0}"
+
+# Use unique backup container/network names so this test does not collide
+# with an existing aifs environment.
+SUFFIX="smoke-$$"
+BACKUP_CONTAINER="aifs-backup-${SUFFIX}"
+NETWORK_NAME="aifs-net-${SUFFIX}"
+
+WORK_DIR="$(mktemp -d /tmp/aifs-smoke-XXXXXX)"
+CONFIG="${WORK_DIR}/config.yaml"
+MOUNT_POINT="${WORK_DIR}/mnt"
 
 cd "$(dirname "$0")/.."
 
@@ -28,24 +38,35 @@ if [[ ! -x "$AIFS_BIN" ]]; then
     exit 1
 fi
 
-AIFS_HOME="${HOME}/.aifs"
-
-cleanup_containers() {
-    echo "→ Stopping and removing existing aifs containers/networks..."
-    podman stop -t 5 aifs-pg-default aifs-backup 2>/dev/null || true
-    podman rm -f aifs-pg-default aifs-backup 2>/dev/null || true
-    podman network rm -f aifs-net 2>/dev/null || true
+# Pick a free host port to avoid colliding with an existing aifs instance.
+find_free_port() {
+    python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()'
 }
 
-cleanup_home() {
-    echo "→ Removing existing aifs home directory (${AIFS_HOME})..."
-    if [[ -d "${AIFS_HOME}" ]]; then
-        podman unshare rm -rf "${AIFS_HOME}" 2>/dev/null || rm -rf "${AIFS_HOME}"
+# Remove any leftover containers from a previous interrupted run.
+podman rm -f "$CONTAINER" "$BACKUP_CONTAINER" 2>/dev/null || true
+
+cleanup() {
+    set +e
+    echo ""
+    echo "→ Cleaning up..."
+    if [[ -d "$MOUNT_POINT" ]]; then
+        "$AIFS_BIN" -c "$CONFIG" umount "$MOUNT_POINT" 2>/dev/null || true
+    fi
+    "$AIFS_BIN" -c "$CONFIG" destroy -i "$INSTANCE" --clean-data --force 2>/dev/null || true
+    podman rm -f "$CONTAINER" "$BACKUP_CONTAINER" aifs-pg-smoke01 2>/dev/null || true
+    podman network rm -f "$NETWORK_NAME" 2>/dev/null || true
+    if command -v podman >/dev/null 2>&1; then
+        podman unshare rm -rf "$WORK_DIR" 2>/dev/null || rm -rf "$WORK_DIR" 2>/dev/null || true
+    else
+        rm -rf "$WORK_DIR"
     fi
 }
+trap cleanup EXIT
 
 if [[ "$FORCE_CLEAN" != "1" ]]; then
-    echo "⚠️  This script will DESTROY any existing aifs config, containers, and data under ${AIFS_HOME}"
+    echo "⚠️  This script will create an isolated aifs environment under ${WORK_DIR}."
+    echo "    It will be automatically cleaned up when the script exits."
     read -rp "Continue? [y/N]: " ans
     if [[ "$ans" != [yY]* ]]; then
         echo "Cancelled"
@@ -53,55 +74,62 @@ if [[ "$FORCE_CLEAN" != "1" ]]; then
     fi
 fi
 
-cleanup_containers
-cleanup_home
-
 echo ""
 echo "=== aifs e2e smoke test ==="
-echo "Instance: ${INSTANCE}"
+echo "Instance:       ${INSTANCE}"
+echo "Work dir:       ${WORK_DIR}"
+echo "Backup network: ${NETWORK_NAME}"
+echo "Backup container: ${BACKUP_CONTAINER}"
 echo ""
 
 echo "=== 1. config init ==="
-"$AIFS_BIN" config init --add "$INSTANCE"
+"$AIFS_BIN" config init -o "$CONFIG" --add "$INSTANCE" --base-dir "$WORK_DIR"
+
+# Isolate backup container/network from any existing aifs environment.
+sed -i "s/^network: aifs-net$/network: ${NETWORK_NAME}/" "$CONFIG"
+sed -i "s/^\\( *container_name:\\) aifs-backup$/\\1 ${BACKUP_CONTAINER}/" "$CONFIG"
+
+# Assign a free host port so this test does not collide with an existing PG instance.
+HOST_PORT=$(find_free_port)
+sed -i "s/^\\( *host_port:\\) .*/\\1 ${HOST_PORT}/" "$CONFIG"
 
 echo ""
 echo "=== 2. config validate ==="
-"$AIFS_BIN" config validate
+"$AIFS_BIN" -c "$CONFIG" config validate
 
 echo ""
 echo "=== 3. config show ==="
-"$AIFS_BIN" config show
+"$AIFS_BIN" -c "$CONFIG" config show
 
 echo ""
 echo "=== 4. create extra instance (smoke01) ==="
-"$AIFS_BIN" create -i smoke01
+"$AIFS_BIN" -c "$CONFIG" create -i smoke01
 
 echo ""
 echo "=== 5. list instances ==="
-"$AIFS_BIN" list
+"$AIFS_BIN" -c "$CONFIG" list
 
 echo ""
 echo "=== 6. destroy extra instance ==="
-"$AIFS_BIN" destroy -i smoke01 --force
+"$AIFS_BIN" -c "$CONFIG" destroy -i smoke01 --force
 
 echo ""
 echo "=== 7. start ${INSTANCE} instance ==="
-"$AIFS_BIN" start -i "$INSTANCE"
+"$AIFS_BIN" -c "$CONFIG" start -i "$INSTANCE"
 
 echo ""
 echo "=== 8. status ==="
-"$AIFS_BIN" status -i "$INSTANCE"
+"$AIFS_BIN" -c "$CONFIG" status -i "$INSTANCE"
 
 echo ""
 echo "=== 9. format filesystem ==="
-"$AIFS_BIN" format -i "$INSTANCE" --volume "$INSTANCE"
+"$AIFS_BIN" -c "$CONFIG" format -i "$INSTANCE" --volume "$INSTANCE"
 
-MOUNT_POINT="/tmp/aifs-smoke-${INSTANCE}-mnt"
 mkdir -p "$MOUNT_POINT"
 
 echo ""
 echo "=== 10. mount filesystem ==="
-"$AIFS_BIN" mount -i "$INSTANCE" "$MOUNT_POINT" -d
+"$AIFS_BIN" -c "$CONFIG" mount -i "$INSTANCE" "$MOUNT_POINT" -d
 sleep 2
 
 echo ""
@@ -116,11 +144,11 @@ echo "  ✓ filesystem operations passed"
 
 echo ""
 echo "=== 12. umount filesystem ==="
-"$AIFS_BIN" umount "$MOUNT_POINT"
+"$AIFS_BIN" -c "$CONFIG" umount "$MOUNT_POINT"
 
 echo ""
 echo "=== 13. backup status ==="
-"$AIFS_BIN" backup status
+"$AIFS_BIN" -c "$CONFIG" backup status
 
 echo ""
 echo "=== 14. create test table and insert data ==="
@@ -131,42 +159,37 @@ echo "  ✓ inserted 1 row"
 
 echo ""
 echo "=== 15. snapshot create (full, tail-logs) ==="
-"$AIFS_BIN" snapshot create -i "$INSTANCE" --tail-logs --comment "e2e smoke full"
+"$AIFS_BIN" -c "$CONFIG" snapshot create -i "$INSTANCE" --tail-logs
 
 echo ""
 echo "=== 16. snapshot list ==="
-"$AIFS_BIN" snapshot list -i "$INSTANCE"
+"$AIFS_BIN" -c "$CONFIG" snapshot list -i "$INSTANCE"
 
 echo ""
 echo "=== 17. stop ${INSTANCE} ==="
-"$AIFS_BIN" stop -i "$INSTANCE"
+"$AIFS_BIN" -c "$CONFIG" stop -i "$INSTANCE"
 
 echo ""
 echo "=== 18. restart ${INSTANCE} ==="
-"$AIFS_BIN" start -i "$INSTANCE"
+"$AIFS_BIN" -c "$CONFIG" start -i "$INSTANCE"
 
 echo ""
 echo "=== 19. status after restart ==="
-"$AIFS_BIN" status -i "$INSTANCE"
+"$AIFS_BIN" -c "$CONFIG" status -i "$INSTANCE"
 
 echo ""
 echo "=== 20. snapshot after restart (incr, tail-logs) ==="
-"$AIFS_BIN" snapshot create -i "$INSTANCE" --type incr --tail-logs --comment "e2e smoke incr"
+"$AIFS_BIN" -c "$CONFIG" snapshot create -i "$INSTANCE" --type incr --tail-logs
 
 echo ""
 echo "=== 21. destroy ${INSTANCE} (with clean-data) ==="
-"$AIFS_BIN" destroy -i "$INSTANCE" --clean-data --force || {
+"$AIFS_BIN" -c "$CONFIG" destroy -i "$INSTANCE" --clean-data --force || {
     echo "  ⚠ destroy --clean-data returned an error, will force-cleanup at the end"
 }
 
 echo ""
 echo "=== 22. stop backup container ==="
-"$AIFS_BIN" backup stop
-
-echo ""
-echo "=== 23. final cleanup ==="
-cleanup_containers
-cleanup_home
+"$AIFS_BIN" -c "$CONFIG" backup stop
 
 echo ""
 echo "✓ aifs e2e smoke test completed successfully"

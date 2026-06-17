@@ -5,7 +5,10 @@
 #   ./scripts/test-pitr.sh [instance_name]
 #
 # Environment:
-#   AIFS_BIN    path to aifs binary (default: ./aifs)
+#   AIFS_BIN    path to aifs binary (default: ./build/aifs)
+#
+# The script uses an isolated work directory and config file so it does not
+# interfere with an existing aifs environment.
 #
 # The script:
 #   1. Creates (or recreates) a PG instance
@@ -20,16 +23,29 @@
 set -euo pipefail
 
 INSTANCE="${1:-proj01}"
-CONTAINER="aifs-pg-${INSTANCE}"
-DB="${INSTANCE}_db"
 AIFS_BIN="${AIFS_BIN:-./build/aifs}"
+
+# Isolate backup container/network from any existing aifs environment.
+SUFFIX="pitr-$$"
+BACKUP_CONTAINER="aifs-backup-${SUFFIX}"
+NETWORK_NAME="aifs-net-${SUFFIX}"
+
+WORK_DIR="$(mktemp -d /tmp/aifs-pitr-XXXXXX)"
+CONFIG="${WORK_DIR}/config.yaml"
+
 PRE_ROWS=10
 WRITE_SECONDS=40
 POST_SECONDS=30
 
+CONTAINER="aifs-pg-${INSTANCE}"
+DB="${INSTANCE}_db"
+
 echo "=== aifs PITR end-to-end test ==="
-echo "Instance: ${INSTANCE}"
-echo "Binary:   ${AIFS_BIN}"
+echo "Instance:       ${INSTANCE}"
+echo "Binary:         ${AIFS_BIN}"
+echo "Work dir:       ${WORK_DIR}"
+echo "Backup network: ${NETWORK_NAME}"
+echo "Backup container: ${BACKUP_CONTAINER}"
 echo ""
 
 cd "$(dirname "$0")/.."
@@ -39,18 +55,53 @@ if [[ ! -x "$AIFS_BIN" ]]; then
     exit 1
 fi
 
-cleanup_instance() {
-    echo "→ Cleaning up instance ${INSTANCE} (if it exists)..."
-    "$AIFS_BIN" destroy -i "${INSTANCE}" --clean-data --force >/dev/null 2>&1 || true
+# Pick a free host port to avoid colliding with an existing aifs instance.
+find_free_port() {
+    python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()'
 }
 
-cleanup_instance
+# Remove any leftover containers from a previous interrupted run.
+podman rm -f "$CONTAINER" "$BACKUP_CONTAINER" 2>/dev/null || true
 
-echo "→ Creating instance ${INSTANCE}..."
-"$AIFS_BIN" create -i "${INSTANCE}"
+cleanup() {
+    set +e
+    echo ""
+    echo "→ Cleaning up..."
+    "$AIFS_BIN" -c "$CONFIG" destroy -i "${INSTANCE}" --clean-data --force >/dev/null 2>&1 || true
+    podman rm -f "$CONTAINER" "$BACKUP_CONTAINER" 2>/dev/null || true
+    podman network rm -f "$NETWORK_NAME" 2>/dev/null || true
+    if command -v podman >/dev/null 2>&1; then
+        podman unshare rm -rf "$WORK_DIR" 2>/dev/null || rm -rf "$WORK_DIR" 2>/dev/null || true
+    else
+        rm -rf "$WORK_DIR"
+    fi
+}
+trap cleanup EXIT
 
-echo "→ Starting instance ${INSTANCE}..."
-"$AIFS_BIN" start -i "${INSTANCE}"
+FORCE_CLEAN="${FORCE_CLEAN:-0}"
+if [[ "$FORCE_CLEAN" != "1" ]]; then
+    echo "⚠️  This script will create an isolated aifs environment under ${WORK_DIR}."
+    echo "    It will be automatically cleaned up when the script exits."
+    read -rp "Continue? [y/N]: " ans
+    if [[ "$ans" != [yY]* ]]; then
+        echo "Cancelled"
+        exit 0
+    fi
+fi
+
+echo "→ Generating isolated config..."
+"$AIFS_BIN" config init -o "$CONFIG" --add "$INSTANCE" --base-dir "$WORK_DIR"
+
+# Use unique backup container/network names so we do not touch an existing aifs setup.
+sed -i "s/^network: aifs-net$/network: ${NETWORK_NAME}/" "$CONFIG"
+sed -i "s/^\\( *container_name:\\) aifs-backup$/\\1 ${BACKUP_CONTAINER}/" "$CONFIG"
+
+# Assign a free host port so this test does not collide with an existing PG instance.
+HOST_PORT=$(find_free_port)
+sed -i "s/^\\( *host_port:\\) .*/\\1 ${HOST_PORT}/" "$CONFIG"
+
+echo "→ Creating and starting instance ${INSTANCE}..."
+"$AIFS_BIN" -c "$CONFIG" start -i "${INSTANCE}"
 
 echo "→ Creating restore_test table..."
 podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -c "DROP TABLE IF EXISTS restore_test;" >/dev/null
@@ -62,7 +113,7 @@ for i in $(seq 1 "${PRE_ROWS}"); do
 done
 
 echo "→ Taking full backup..."
-"$AIFS_BIN" snapshot create -i "${INSTANCE}" --type full
+"$AIFS_BIN" -c "$CONFIG" snapshot create -i "${INSTANCE}" --type full
 
 echo "→ Starting background writer (1 row/sec)..."
 local_writer_script=$(cat <<'EOF'
@@ -94,7 +145,7 @@ FINAL_ROWS=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT co
 echo "  ${FINAL_ROWS}"
 
 echo "→ Restoring to ${TARGET_TIME_UTC}..."
-"$AIFS_BIN" restore -i "${INSTANCE}" --time "${TARGET_TIME_UTC}" --force
+"$AIFS_BIN" -c "$CONFIG" restore -i "${INSTANCE}" --time "${TARGET_TIME_UTC}" --force
 
 echo "→ Waiting for PostgreSQL to be ready..."
 sleep 5

@@ -521,9 +521,27 @@ func (m *Manager) createContainer() error {
 		"-e", fmt.Sprintf("POSTGRES_USER=%s", m.cfg.Postgres.User),
 		"-e", fmt.Sprintf("POSTGRES_PASSWORD=%s", m.cfg.Postgres.Password),
 		"-e", fmt.Sprintf("PGBACKREST_STANZA=%s", m.cfg.PITR.PgBackRestStanza),
-			"-e", "PGDATA=/var/lib/postgresql/data",
-		m.cfg.Podman.ImageTag,
+		"-e", "PGDATA=/var/lib/postgresql/data",
 	}
+
+	// Mount the backup container's public key so the PG container entrypoint
+	// can install it as authorized_keys for postgres on every startup. This
+	// makes the key survive PG container recreation without explicit re-auth.
+	if m.cfg.PITR.Enabled {
+		bm, err := NewBackupManager(m.cfg)
+		if err != nil {
+			return fmt.Errorf("creating backup manager: %w", err)
+		}
+		keys, err := bm.EnsureSSHKey()
+		if err != nil {
+			return fmt.Errorf("ensuring backup ssh key: %w", err)
+		}
+		args = append(args,
+			"-v", fmt.Sprintf("%s:/run/aifs/backup_id_rsa.pub:ro", keys.Public),
+		)
+	}
+
+	args = append(args, m.cfg.Podman.ImageTag)
 	if _, err := m.run(args...); err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
