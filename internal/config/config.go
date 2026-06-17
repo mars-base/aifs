@@ -44,7 +44,7 @@ type PostgresConfig struct {
 	Database string `yaml:"database"`  // database name, default aifs
 }
 
-// FilesystemConfig holds JuiceFS filesystem settings.
+// FilesystemConfig holds filesystem settings.
 type FilesystemConfig struct {
 	Name         string `yaml:"name"`          // filesystem name
 	MountPoint   string `yaml:"mount_point"`   // mount point, "auto" uses platform default

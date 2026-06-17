@@ -81,25 +81,6 @@ func CheckPodman() DepStatus {
 	}
 }
 
-// CheckJuiceFS checks if juicefs is available.
-func CheckJuiceFS() DepStatus {
-	path, err := exec.LookPath("juicefs")
-	if err != nil {
-		return DepStatus{
-			Name:  "juicefs",
-			Found: false,
-			Hint:  "juicefs is not installed. Download prebuilt binary from https://github.com/juicedata/juicefs/releases, or run aifs setup to auto-download.",
-		}
-	}
-	ver, _ := runCmd(path, "version")
-	return DepStatus{
-		Name:    "juicefs",
-		Found:   true,
-		Path:    path,
-		Version: ver,
-	}
-}
-
 // CheckPodmanMachine checks podman machine status (macOS/Windows only).
 func CheckPodmanMachine() DepStatus {
 	path, err := exec.LookPath("podman")
@@ -136,13 +117,12 @@ func MissingPrereqs() []DepStatus {
 			missing = append(missing, d)
 		}
 	}
-	// JuiceFS is not a hard dependency (aifs setup can auto-download)
 	return missing
 }
 
 // --- Default paths ---
 
-// DefaultMountPoint returns the default JuiceFS mount point.
+// DefaultMountPoint returns the default filesystem mount point.
 func DefaultMountPoint() string {
 	switch Detect() {
 	case Linux:
@@ -157,12 +137,12 @@ func DefaultMountPoint() string {
 	}
 }
 
-// DefaultCacheDir returns the default JuiceFS cache directory.
+// DefaultCacheDir returns the default filesystem cache directory.
 func DefaultCacheDir() string {
 	switch Detect() {
 	case Linux:
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".juicefs", "cache")
+		return filepath.Join(home, ".aifs", "cache")
 	case MacOS:
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, "Library", "Caches", "aifs")
@@ -170,7 +150,7 @@ func DefaultCacheDir() string {
 		return filepath.Join(os.Getenv("LOCALAPPDATA"), "aifs", "cache")
 	default:
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".juicefs", "cache")
+		return filepath.Join(home, ".aifs", "cache")
 	}
 }
 

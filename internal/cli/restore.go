@@ -35,7 +35,6 @@ Process:
   1. Stop PostgreSQL
   2. pgBackRest restore --type=time --target=<time>
   3. Start PostgreSQL
-  4. JuiceFS auto-detects new data
 
 Examples:
   aifs restore --time "2026-06-14 15:04:05+00"
