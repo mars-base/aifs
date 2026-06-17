@@ -22,7 +22,7 @@ set -euo pipefail
 INSTANCE="${1:-proj01}"
 CONTAINER="aifs-pg-${INSTANCE}"
 DB="${INSTANCE}_db"
-AIFS_BIN="${AIFS_BIN:-./aifs}"
+AIFS_BIN="${AIFS_BIN:-./build/aifs}"
 PRE_ROWS=10
 WRITE_SECONDS=40
 POST_SECONDS=30
