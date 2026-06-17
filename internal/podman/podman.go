@@ -4,13 +4,12 @@ package podman
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/mars-base/aifs/internal/config"
@@ -382,17 +381,16 @@ func removeHostDir(podmanPath, dir string) error {
 	return nil
 }
 
-// PGIsReady checks if PostgreSQL is accepting connections and has finished
-// initialization by running pg_isready against the host-mapped port.
+// PGIsReady checks if PostgreSQL is accepting TCP connections on the
+// host-mapped port. This works on all platforms, including Windows where the
+// host pg_isready binary may not be available.
 func (m *Manager) PGIsReady() (bool, error) {
-	cmd := exec.Command("pg_isready",
-		"-h", "127.0.0.1",
-		"-p", fmt.Sprintf("%d", m.cfg.Podman.HostPort),
-		"-U", m.cfg.Postgres.User,
-	)
-	if err := cmd.Run(); err != nil {
+	addr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", m.cfg.Podman.HostPort))
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
 		return false, nil
 	}
+	_ = conn.Close()
 	return true, nil
 }
 
@@ -568,133 +566,4 @@ log-level-console=info
 		return "", fmt.Errorf("writing %s: %w", confPath, err)
 	}
 	return confPath, nil
-}
-
-// execWithTimeoutStreaming runs podman while also copying stdout/stderr to the
-// process stdout/stderr so logs are visible in real time. A copy of the output
-// is still returned for error reporting.
-func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Duration) (string, error) {
-	slog.Debug("execWithTimeoutStreaming", "args", args)
-	cmd := exec.Command(podmanPath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	var stdoutBuf, stderrBuf strings.Builder
-	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-
-	type result struct {
-		out string
-		err error
-	}
-	done := make(chan result, 1)
-
-	go func() {
-		err := cmd.Run()
-		out := stdoutBuf.String()
-		if err != nil {
-			// Podman may report a non-zero exit after `podman run --rm` because it
-			// tries to forward a terminal signal (e.g. SIGWINCH) to a container
-			// that has already been removed. If the actual command succeeded,
-			// treat this as success.
-			if isPodmanCleanupNoise(stderrBuf.String()) && strings.Contains(out, "completed successfully") {
-				done <- result{out, nil}
-				return
-			}
-			if _, ok := err.(*exec.ExitError); ok {
-				errMsg := stderrBuf.String()
-				if errMsg == "" {
-					errMsg = out
-				}
-				done <- result{"", fmt.Errorf("podman %s: %s", strings.Join(args, " "), errMsg)}
-				return
-			}
-			done <- result{"", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)}
-			return
-		}
-		done <- result{out, nil}
-	}()
-
-	select {
-	case r := <-done:
-		if r.err != nil {
-			return "", r.err
-		}
-		return r.out, nil
-	case <-time.After(timeout):
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		return "", fmt.Errorf("podman %s timed out after %v", strings.Join(args, " "), timeout)
-	}
-}
-
-// isPodmanCleanupNoise reports whether stderr only contains podman cleanup
-// messages after a container has already exited. This happens when podman
-// receives a terminal signal (e.g. SIGWINCH) while removing a `run --rm`
-// container and tries to forward it to the now-gone container.
-func isPodmanCleanupNoise(stderr string) bool {
-	if stderr == "" {
-		return false
-	}
-	for _, line := range strings.Split(stderr, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.Contains(line, "forwarding signal") &&
-			(strings.Contains(line, "no such container") || strings.Contains(line, "container has already been removed")) {
-			continue
-		}
-		if strings.Contains(line, "container has already been removed") {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// execWithTimeout runs podman with a goroutine+channel timeout.
-// Uses cmd.Run() with explicit buffers instead of cmd.Output() because
-// cmd.Output()'s prefixSuffixSaver can cause pipe hangs with podman exec.
-// Explicitly kills the process on timeout, works cross-platform.
-func execWithTimeout(podmanPath string, args []string, timeout time.Duration) (string, error) {
-	slog.Debug("execWithTimeout", "args", args)
-	cmd := exec.Command(podmanPath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	type result struct {
-		out string
-		err error
-	}
-	done := make(chan result, 1)
-
-	go func() {
-		err := cmd.Run()
-		out := stdout.String()
-		if err != nil {
-			if _, ok := err.(*exec.ExitError); ok {
-				errMsg := stderr.String()
-				if errMsg == "" {
-					errMsg = out
-				}
-				done <- result{"", fmt.Errorf("podman %s: %s", strings.Join(args, " "), errMsg)}
-				return
-			}
-			done <- result{"", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)}
-			return
-		}
-		done <- result{out, nil}
-	}()
-
-	select {
-	case r := <-done:
-		if r.err != nil {
-			return "", r.err
-		}
-		return r.out, nil
-	case <-time.After(timeout):
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		return "", fmt.Errorf("podman %s timed out after %v", strings.Join(args, " "), timeout)
-	}
 }
