@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,7 +19,7 @@ func init() {
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show aifs running status",
-	Long:  `status shows PostgreSQL container status, PG health check, and recent backup info.`,
+	Long:  `status shows PostgreSQL container status, PG health check, active mounts, and recent backup info.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadConfig(); err != nil {
 			return err
@@ -56,6 +59,18 @@ var statusCmd = &cobra.Command{
 			}
 		}
 
+		// Active FUSE mounts
+		if mounts, err := activeAIFSMounts(); err == nil {
+			if len(mounts) > 0 {
+				fmt.Println("\nActive mounts:")
+				for _, m := range mounts {
+					fmt.Printf("  %s\n", m)
+				}
+			} else {
+				fmt.Println("\nActive mounts: (none)")
+			}
+		}
+
 		// Backup info (when PITR enabled)
 		if cfg.PITR.Enabled && cs.Running {
 			pt := pitr.New(cfg, pm, bm)
@@ -90,4 +105,26 @@ var statusCmd = &cobra.Command{
 		fmt.Println()
 		return nil
 	},
+}
+
+// activeAIFSMounts returns local FUSE mount points whose source is "aifs".
+func activeAIFSMounts() ([]string, error) {
+	f, err := os.Open("/proc/self/mounts")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var mounts []string
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		fields := strings.Fields(s.Text())
+		if len(fields) < 4 {
+			continue
+		}
+		if fields[0] == "aifs" && strings.HasPrefix(fields[2], "fuse") {
+			mounts = append(mounts, fields[1])
+		}
+	}
+	return mounts, s.Err()
 }
