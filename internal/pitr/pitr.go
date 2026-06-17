@@ -173,11 +173,12 @@ func (m *Manager) DeleteBefore(before time.Time) error {
 
 // Restore performs point-in-time recovery.
 // targetTime specifies the recovery target time.
+// dryRun only prints the plan. tailLogs streams the restore container output to stdout.
 // Restore process:
 // 1. Stop PostgreSQL container
 // 2. pgBackRest restore in a temporary container mounting the same data directory
 // 3. Start PostgreSQL container
-func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
+func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) error {
 	stanza := m.cfg.PITR.PgBackRestStanza
 	targetStr := targetTime.Format("2006-01-02 15:04:05-07")
 
@@ -199,7 +200,7 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool) error {
 	}
 
 	fmt.Println("  2/3 Running pgBackRest restore...")
-	out, err := m.podman.RunRestoreContainer(stanza, targetStr)
+	out, err := m.podman.RunRestoreContainer(stanza, targetStr, tailLogs)
 	if err != nil {
 		return fmt.Errorf("pgBackRest restore: %w\n%s", err, out)
 	}

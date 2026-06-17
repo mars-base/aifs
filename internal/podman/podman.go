@@ -4,6 +4,7 @@ package podman
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -412,7 +413,8 @@ func (m *Manager) ContainerIP() (string, error) {
 // The PG container must be stopped first. The temporary container mounts the
 // same data directory and backup repo, using the per-instance pgbackrest.conf
 // (which has no pg1-host, so restore runs locally on the data directory).
-func (m *Manager) RunRestoreContainer(stanza, target string) (string, error) {
+// If tailLogs is true, the container's stdout/stderr is also streamed to os stdout/stderr.
+func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (string, error) {
 	confPath, err := m.writeInstancePgbackrestConf()
 	if err != nil {
 		return "", fmt.Errorf("generating pgbackrest.conf: %w", err)
@@ -431,6 +433,9 @@ func (m *Manager) RunRestoreContainer(stanza, target string) (string, error) {
 		"--log-level-console=info",
 	}
 
+	if tailLogs {
+		return execWithTimeoutStreaming(m.podman, args, 10*time.Minute)
+	}
 	return execWithTimeout(m.podman, args, 10*time.Minute)
 }
 
@@ -545,6 +550,54 @@ log-level-console=info
 		return "", fmt.Errorf("writing %s: %w", confPath, err)
 	}
 	return confPath, nil
+}
+
+// execWithTimeoutStreaming runs podman while also copying stdout/stderr to the
+// process stdout/stderr so logs are visible in real time. A copy of the output
+// is still returned for error reporting.
+func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Duration) (string, error) {
+	slog.Debug("execWithTimeoutStreaming", "args", args)
+	cmd := exec.Command(podmanPath, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	var stdoutBuf, stderrBuf strings.Builder
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		err := cmd.Run()
+		out := stdoutBuf.String()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				errMsg := stderrBuf.String()
+				if errMsg == "" {
+					errMsg = out
+				}
+				done <- result{"", fmt.Errorf("podman %s: %s", strings.Join(args, " "), errMsg)}
+				return
+			}
+			done <- result{"", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)}
+			return
+		}
+		done <- result{out, nil}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return "", r.err
+		}
+		return r.out, nil
+	case <-time.After(timeout):
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		return "", fmt.Errorf("podman %s timed out after %v", strings.Join(args, " "), timeout)
+	}
 }
 
 // execWithTimeout runs podman with a goroutine+channel timeout.

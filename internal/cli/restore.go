@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	restoreTime    string
-	restoreDryRun  bool
-	restoreForce   bool
+	restoreTime     string
+	restoreDryRun   bool
+	restoreForce    bool
+	restoreTailLogs bool
 )
 
 func init() {
@@ -20,6 +21,7 @@ func init() {
 	restoreCmd.Flags().StringVar(&restoreTime, "time", "", "Restore to specified time (e.g. '2026-06-14 15:04:05+00' or '2026-06-14 15:04:05')")
 	restoreCmd.Flags().BoolVar(&restoreDryRun, "dry-run", false, "Only show what would be done, do not execute")
 	restoreCmd.Flags().BoolVar(&restoreForce, "force", false, "Skip confirmation prompt")
+	restoreCmd.Flags().BoolVar(&restoreTailLogs, "tail-logs", false, "Stream restore container logs to stdout during recovery")
 }
 
 var restoreCmd = &cobra.Command{
@@ -38,6 +40,7 @@ Process:
 Examples:
   aifs restore --time "2026-06-14 15:04:05+00"
   aifs restore --time "2026-06-14 15:04:05+00" --dry-run
+  aifs restore --time "2026-06-14 15:04:05+00" --tail-logs
   aifs restore --time "2026-06-14 15:04:05+00" --force`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadConfig(); err != nil {
@@ -81,7 +84,7 @@ Examples:
 
 		// dry-run mode
 		if restoreDryRun {
-			return pt.Restore(targetTime, true)
+			return pt.Restore(targetTime, true, restoreTailLogs)
 		}
 
 		// Confirmation (unless --force)
@@ -100,6 +103,6 @@ Examples:
 			}
 		}
 
-		return pt.Restore(targetTime, false)
+		return pt.Restore(targetTime, false, restoreTailLogs)
 	},
 }
