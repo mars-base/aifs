@@ -43,7 +43,7 @@ func (m *Manager) EnsureStanza() error {
 	stanza := m.cfg.PITR.PgBackRestStanza
 
 	// Check if stanza already exists
-	out, err := m.pgbackrest("--stanza="+stanza, "stanza-create", "--log-level-console=info")
+	out, err := m.pgbackrest(false, "--stanza="+stanza, "stanza-create", "--log-level-console=info")
 	if err != nil {
 		// stanza-create errors if already exists, ignore
 		if !strings.Contains(err.Error(), "already exists") && !strings.Contains(out, "already exists") {
@@ -64,7 +64,7 @@ func (m *Manager) EnsureStanza() error {
 // CheckStanza verifies the stanza configuration.
 func (m *Manager) CheckStanza() error {
 	stanza := m.cfg.PITR.PgBackRestStanza
-	out, err := m.pgbackrest("--stanza="+stanza, "check", "--log-level-console=info")
+	out, err := m.pgbackrest(false, "--stanza="+stanza, "check", "--log-level-console=info")
 	if err != nil {
 		return fmt.Errorf("pgBackRest stanza check failed: %w\n%s", err, out)
 	}
@@ -75,7 +75,8 @@ func (m *Manager) CheckStanza() error {
 
 // CreateSnapshot creates a backup snapshot.
 // backupType: "full" (default), "incr", "diff"
-func (m *Manager) CreateSnapshot(comment, backupType string) (*Snapshot, error) {
+// tailLogs streams the backup container output to stdout during the backup.
+func (m *Manager) CreateSnapshot(comment, backupType string, tailLogs bool) (*Snapshot, error) {
 	if backupType == "" {
 		backupType = "full"
 	}
@@ -89,7 +90,7 @@ func (m *Manager) CreateSnapshot(comment, backupType string) (*Snapshot, error) 
 	}
 
 	fmt.Printf("→ Creating %s backup...\n", backupType)
-	out, err := m.pgbackrest(args...)
+	out, err := m.pgbackrest(tailLogs, args...)
 	if err != nil {
 		_ = m.backup.EnsureRepoReadable()
 		return nil, fmt.Errorf("creating backup: %w\n%s", err, out)
@@ -121,7 +122,7 @@ func (m *Manager) ListSnapshots(limit int) ([]Snapshot, error) {
 		"--log-level-console=info",
 	}
 
-	out, err := m.pgbackrest(args...)
+	out, err := m.pgbackrest(false, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing backups: %w\n%s", err, out)
 	}
@@ -143,7 +144,7 @@ func (m *Manager) DeleteSnapshot(name string) error {
 		"--log-level-console=info",
 	}
 
-	out, err := m.pgbackrest(args...)
+	out, err := m.pgbackrest(false, args...)
 	if err != nil {
 		return fmt.Errorf("deleting backup %s: %w\n%s", name, err, out)
 	}
@@ -161,7 +162,7 @@ func (m *Manager) DeleteBefore(before time.Time) error {
 	}
 
 	// pgBackRest expire uses retention config to auto-handle old backups
-	out, err := m.pgbackrest(args...)
+	out, err := m.pgbackrest(false, args...)
 	if err != nil {
 		return fmt.Errorf("cleaning old backups: %w\n%s", err, out)
 	}
@@ -221,9 +222,9 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 
 // ─── Internal methods ─────────────────────────────────────────────
 
-func (m *Manager) pgbackrest(args ...string) (string, error) {
+func (m *Manager) pgbackrest(tailLogs bool, args ...string) (string, error) {
 	slog.Debug("pgbackrest", "args", args)
-	return m.backup.BackupExec(append([]string{"pgbackrest"}, args...)...)
+	return m.backup.BackupExec(tailLogs, append([]string{"pgbackrest"}, args...)...)
 }
 
 // extractLabel extracts the backup label from pgBackRest output.

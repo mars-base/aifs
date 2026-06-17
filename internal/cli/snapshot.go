@@ -22,9 +22,10 @@ var snapshotCmd = &cobra.Command{
 }
 
 var (
-	snapComment string
-	snapType    string
-	snapLimit   int
+	snapComment  string
+	snapType     string
+	snapLimit    int
+	snapTailLogs bool
 )
 
 var snapshotCreateCmd = &cobra.Command{
@@ -57,7 +58,7 @@ Backup types:
 		pt := pitr.New(cfg, pm, bm)
 
 		fmt.Println("→ Note: database backups may take a long time, do not interrupt the task")
-		snap, err := pt.CreateSnapshot(snapComment, snapType)
+		snap, err := pt.CreateSnapshot(snapComment, snapType, snapTailLogs)
 		if err != nil {
 			return err
 		}
@@ -149,6 +150,7 @@ var snapshotDeleteCmd = &cobra.Command{
 func init() {
 	snapshotCreateCmd.Flags().StringVar(&snapComment, "comment", "", "Snapshot comment")
 	snapshotCreateCmd.Flags().StringVar(&snapType, "type", "full", "Backup type: full, incr, diff")
+	snapshotCreateCmd.Flags().BoolVar(&snapTailLogs, "tail-logs", false, "Stream backup container logs to stdout during snapshot")
 
 	snapshotListCmd.Flags().IntVar(&snapLimit, "limit", 0, "Limit display count (0=all)")
 }

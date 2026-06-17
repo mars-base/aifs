@@ -447,8 +447,13 @@ func (m *BackupManager) CheckContainerRunning(name string) (bool, error) {
 }
 
 // BackupExec runs a command inside the backup container.
-func (m *BackupManager) BackupExec(args ...string) (string, error) {
+// If tailLogs is true, the container's stdout/stderr is also streamed to the
+// process stdout/stderr.
+func (m *BackupManager) BackupExec(tailLogs bool, args ...string) (string, error) {
 	podmanArgs := append([]string{"exec", "-i=false", m.cfg.Backup.ContainerName}, args...)
+	if tailLogs {
+		return execWithTimeoutStreaming(m.podman, podmanArgs, 10*time.Minute)
+	}
 	return execWithTimeout(m.podman, podmanArgs, 10*time.Minute)
 }
 
