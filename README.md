@@ -149,7 +149,6 @@ instances:
     podman:
       container_name: "aifs-pg-default"
       data_dir: "~/.aifs/dbdata/default/data"
-      wal_dir: "~/.aifs/dbdata/default/wal"
       image_tag: "ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0"
       host_port: 25432
     pitr:

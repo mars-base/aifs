@@ -27,8 +27,8 @@ var createCmd = &cobra.Command{
 The instance name is specified with -i / --instance.
 Database name is derived as <instance>_db.
 
-Data and WAL directories use the base_dir from config if set,
-otherwise default to ~/.aifs/dbdata/<instance>/.
+Data directory uses the base_dir from config if set,
+otherwise defaults to ~/.aifs/dbdata/<instance>/.
 Use --base-dir to override the config base_dir for this instance.
 
 Examples:
@@ -89,7 +89,6 @@ Examples:
 		fmt.Printf("  password:   %s\n", inst.Postgres.Password)
 		fmt.Printf("  container:  %s\n", inst.Podman.ContainerName)
 		fmt.Printf("  data_dir:   %s\n", inst.Podman.DataDir)
-		fmt.Printf("  wal_dir:    %s\n", inst.Podman.WALDir)
 		fmt.Printf("  stanza:     %s\n", inst.PITR.PgBackRestStanza)
 		fmt.Printf("  config:     %s\n", path)
 		return nil

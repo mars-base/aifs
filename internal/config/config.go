@@ -56,7 +56,6 @@ type FilesystemConfig struct {
 type PodmanConfig struct {
 	ContainerName string `yaml:"container_name"` // PG container name, default aifs-pg
 	DataDir       string `yaml:"data_dir"`       // PG data directory (host path), default ~/.aifs/dbdata/<name>/data
-	WALDir        string `yaml:"wal_dir"`        // WAL archive directory (host path), default ~/.aifs/dbdata/<name>/wal
 	ImageTag      string `yaml:"image_tag"`      // image tag, default ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0
 	HostPort      int    `yaml:"host_port"`       // host port for PG mapping, 0=auto-assign from 25432
 	Network       string `yaml:"network"`         // podman network name, default aifs-net
@@ -102,7 +101,6 @@ func Default() *Config {
 		Podman: PodmanConfig{
 			ContainerName: "aifs-pg",
 			DataDir:       filepath.Join(platform.DefaultConfigDir(), "dbdata", "data"),
-			WALDir:        filepath.Join(platform.DefaultConfigDir(), "dbdata", "wal"),
 			ImageTag:      "ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0",
 			Network:       "aifs-net",
 		},
@@ -143,7 +141,6 @@ func (c *Config) InstanceDefaults(name string) *InstanceConfig {
 		Podman: PodmanConfig{
 			ContainerName: "aifs-pg-" + name,
 			DataDir:       filepath.Join(baseDir, "dbdata", name, "data"),
-			WALDir:        filepath.Join(baseDir, "dbdata", name, "wal"),
 			ImageTag:      c.Podman.ImageTag,
 			HostPort:      0, // auto-assigned starting from 25432
 		},
@@ -190,9 +187,6 @@ func (c *Config) SetInstance(name string) error {
 	}
 	if inst.Podman.DataDir != "" {
 		c.Podman.DataDir = inst.Podman.DataDir
-	}
-	if inst.Podman.WALDir != "" {
-		c.Podman.WALDir = inst.Podman.WALDir
 	}
 	if inst.Podman.ImageTag != "" {
 		c.Podman.ImageTag = inst.Podman.ImageTag
@@ -354,9 +348,6 @@ func (c *Config) applyDefaults() {
 	if c.Podman.DataDir == "" {
 		c.Podman.DataDir = d.Podman.DataDir
 	}
-	if c.Podman.WALDir == "" {
-		c.Podman.WALDir = d.Podman.WALDir
-	}
 	if c.Podman.ImageTag == "" {
 		c.Podman.ImageTag = d.Podman.ImageTag
 	}
@@ -421,9 +412,6 @@ func (c *Config) applyDefaults() {
 		}
 		if inst.Podman.DataDir == "" {
 			inst.Podman.DataDir = def.Podman.DataDir
-		}
-		if inst.Podman.WALDir == "" {
-			inst.Podman.WALDir = def.Podman.WALDir
 		}
 		if inst.Podman.ImageTag == "" {
 			inst.Podman.ImageTag = def.Podman.ImageTag

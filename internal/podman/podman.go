@@ -179,7 +179,6 @@ func (m *Manager) networkExists(name string) (bool, error) {
 func (m *Manager) EnsureDirs() error {
 	dirs := []string{
 		m.cfg.Podman.DataDir,
-		m.cfg.Podman.WALDir,
 	}
 	// Ensure backup dirs exist (shared, host directories)
 	for _, dir := range []string{m.cfg.Backup.DataDir, m.cfg.Backup.LogDir} {
@@ -317,18 +316,16 @@ func (m *Manager) DestroyWithData(cleanData bool) error {
 
 	if !cleanData {
 		fmt.Printf("  Data preserved at: %s\n", m.cfg.Podman.DataDir)
-		fmt.Printf("  WAL preserved at:  %s\n", m.cfg.Podman.WALDir)
 		return nil
 	}
 
 	// Remove host data directories. In rootless mode some files are owned by
-	 // subordinate UIDs, so fall back to a container-based deletion if needed.
+	// subordinate UIDs, so fall back to a container-based deletion if needed.
 	for _, desc := range []struct {
 		name string
 		path string
 	}{
 		{"data", m.cfg.Podman.DataDir},
-		{"wal", m.cfg.Podman.WALDir},
 	} {
 		if desc.path == "" {
 			continue
@@ -515,7 +512,6 @@ func (m *Manager) createContainer() error {
 		"-v", fmt.Sprintf("%s:/var/lib/postgresql", m.cfg.Podman.DataDir),
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", backupVol),
 		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", confPath),
-		"-v", fmt.Sprintf("%s:/var/lib/postgresql/wal-archive", m.cfg.Podman.WALDir),
 		"-e", fmt.Sprintf("POSTGRES_DB=%s", m.cfg.Postgres.Database),
 		"-e", fmt.Sprintf("POSTGRES_USER=%s", m.cfg.Postgres.User),
 		"-e", fmt.Sprintf("POSTGRES_PASSWORD=%s", m.cfg.Postgres.Password),

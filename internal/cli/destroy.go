@@ -29,8 +29,8 @@ var destroyCmd = &cobra.Command{
 instance's configuration entry.
 
 By default host data directories are preserved. Use --clean-data to also
-delete the data directory, WAL directory, and the instance's pgBackRest
-stanza from the shared backup repo.
+delete the data directory and the instance's pgBackRest stanza from the
+shared backup repo.
 
 Use --force to skip the confirmation prompt.
 
@@ -75,7 +75,6 @@ Examples:
 			if destroyCleanData {
 				fmt.Printf("\n  ⚠️  Host data will be PERMANENTLY deleted:\n")
 				fmt.Printf("    data:       %s\n", inst.Podman.DataDir)
-				fmt.Printf("    wal:        %s\n", inst.Podman.WALDir)
 				if inst.PITR.Enabled {
 					fmt.Printf("    backup:     %s/backup/%s\n", cfg.Backup.DataDir, inst.PITR.PgBackRestStanza)
 					fmt.Printf("    archive:    %s/archive/%s\n", cfg.Backup.DataDir, inst.PITR.PgBackRestStanza)
@@ -83,7 +82,6 @@ Examples:
 			} else {
 				fmt.Printf("\n  Data directories preserved on host:\n")
 				fmt.Printf("    data: %s\n", inst.Podman.DataDir)
-				fmt.Printf("    wal:  %s\n", inst.Podman.WALDir)
 			}
 			fmt.Printf("\nConfirm? [y/N]: ")
 
