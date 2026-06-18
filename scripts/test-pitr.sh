@@ -25,10 +25,9 @@ set -euo pipefail
 INSTANCE="${1:-proj01}"
 AIFS_BIN="${AIFS_BIN:-./build/aifs}"
 
-# Isolate backup container/network from any existing aifs environment.
+# Isolate backup container from any existing aifs environment.
 SUFFIX="pitr-$$"
 BACKUP_CONTAINER="aifs-backup-${SUFFIX}"
-NETWORK_NAME="aifs-net-${SUFFIX}"
 
 WORK_DIR="$(mktemp -d /tmp/aifs-pitr-XXXXXX)"
 CONFIG="${WORK_DIR}/config.yaml"
@@ -44,7 +43,6 @@ echo "=== aifs PITR end-to-end test ==="
 echo "Instance:       ${INSTANCE}"
 echo "Binary:         ${AIFS_BIN}"
 echo "Work dir:       ${WORK_DIR}"
-echo "Backup network: ${NETWORK_NAME}"
 echo "Backup container: ${BACKUP_CONTAINER}"
 echo ""
 
@@ -69,7 +67,6 @@ cleanup() {
     echo "→ Cleaning up..."
     "$AIFS_BIN" -c "$CONFIG" destroy -i "${INSTANCE}" --clean-data --force >/dev/null 2>&1 || true
     podman rm -f "$CONTAINER" "$BACKUP_CONTAINER" 2>/dev/null || true
-    podman network rm -f "$NETWORK_NAME" 2>/dev/null || true
     if command -v podman >/dev/null 2>&1; then
         podman unshare rm -rf "$WORK_DIR" 2>/dev/null || rm -rf "$WORK_DIR" 2>/dev/null || true
     else
@@ -92,8 +89,7 @@ fi
 echo "→ Generating isolated config..."
 "$AIFS_BIN" config init -o "$CONFIG" --add "$INSTANCE" --base-dir "$WORK_DIR"
 
-# Use unique backup container/network names so we do not touch an existing aifs setup.
-sed -i "s/^network: aifs-net$/network: ${NETWORK_NAME}/" "$CONFIG"
+# Use unique backup container name so we do not touch an existing aifs setup.
 sed -i "s/^\\( *container_name:\\) aifs-backup$/\\1 ${BACKUP_CONTAINER}/" "$CONFIG"
 
 # Assign a free host port so this test does not collide with an existing PG instance.

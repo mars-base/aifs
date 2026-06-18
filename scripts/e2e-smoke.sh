@@ -20,11 +20,10 @@ CONTAINER="aifs-pg-${INSTANCE}"
 AIFS_BIN="${AIFS_BIN:-./build/aifs}"
 FORCE_CLEAN="${FORCE_CLEAN:-0}"
 
-# Use unique backup container/network names so this test does not collide
+# Use unique backup container name so this test does not collide
 # with an existing aifs environment.
 SUFFIX="smoke-$$"
 BACKUP_CONTAINER="aifs-backup-${SUFFIX}"
-NETWORK_NAME="aifs-net-${SUFFIX}"
 
 WORK_DIR="$(mktemp -d /tmp/aifs-smoke-XXXXXX)"
 CONFIG="${WORK_DIR}/config.yaml"
@@ -55,7 +54,6 @@ cleanup() {
     fi
     "$AIFS_BIN" -c "$CONFIG" destroy -i "$INSTANCE" --clean-data --force 2>/dev/null || true
     podman rm -f "$CONTAINER" "$BACKUP_CONTAINER" aifs-pg-smoke01 2>/dev/null || true
-    podman network rm -f "$NETWORK_NAME" 2>/dev/null || true
     if command -v podman >/dev/null 2>&1; then
         podman unshare rm -rf "$WORK_DIR" 2>/dev/null || rm -rf "$WORK_DIR" 2>/dev/null || true
     else
@@ -78,15 +76,13 @@ echo ""
 echo "=== aifs e2e smoke test ==="
 echo "Instance:       ${INSTANCE}"
 echo "Work dir:       ${WORK_DIR}"
-echo "Backup network: ${NETWORK_NAME}"
 echo "Backup container: ${BACKUP_CONTAINER}"
 echo ""
 
 echo "=== 1. config init ==="
 "$AIFS_BIN" config init -o "$CONFIG" --add "$INSTANCE" --base-dir "$WORK_DIR"
 
-# Isolate backup container/network from any existing aifs environment.
-sed -i "s/^network: aifs-net$/network: ${NETWORK_NAME}/" "$CONFIG"
+# Isolate backup container from any existing aifs environment.
 sed -i "s/^\\( *container_name:\\) aifs-backup$/\\1 ${BACKUP_CONTAINER}/" "$CONFIG"
 
 # Assign a free host port so this test does not collide with an existing PG instance.
