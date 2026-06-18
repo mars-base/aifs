@@ -65,6 +65,26 @@ function GetExePath {
     return ""
 }
 
+# ─── Helper: check if WinFsp is installed ─────────────────
+
+function WinFspInstalled {
+    $keys = @(
+        "HKLM:\SOFTWARE\WOW6432Node\WinFsp",
+        "HKLM:\SOFTWARE\WinFsp"
+    )
+    foreach ($k in $keys) {
+        if (Test-Path $k) { return $true }
+    }
+    $candidates = @(
+        (Join-Path $env:ProgramFiles "WinFsp\bin\winfsp-x64.dll"),
+        (Join-Path ${env:ProgramFiles(x86)} "WinFsp\bin\winfsp-x64.dll")
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return $true }
+    }
+    return $false
+}
+
 # ─── 1. CPU Info ──────────────────────────────────────────
 
 Write-Host "[1] CPU & Virtualization Features"
@@ -147,9 +167,25 @@ if (-not $wslInstalled) {
 }
 Write-Host ""
 
-# ─── 4. Podman Check ──────────────────────────────────────
+# ─── 4. WinFsp Status ─────────────────────────────────────
 
-Write-Host "[4] Podman"
+Write-Host "[4] WinFsp (FUSE runtime for aifs mount)"
+Write-Host "-----------------------------------"
+
+if (WinFspInstalled) {
+    Write-Host "  WinFsp: installed"
+} else {
+    Write-Host "  WinFsp: not installed"
+    Write-Host "  [HINT] Install before running `aifs mount`:"
+    Write-Host "         winget install WinFsp.WinFsp"
+    Write-Host "         choco install winfsp"
+    Write-Host "         https://winfsp.dev/rel/"
+}
+Write-Host ""
+
+# ─── 5. Podman Check ──────────────────────────────────────
+
+Write-Host "[5] Podman"
 Write-Host "-----------------------------------"
 
 $podmanInstalled = CmdExists "podman"
@@ -172,14 +208,17 @@ Write-Host "  Summary"
 Write-Host "======================================"
 
 if ($allOk) {
-    Write-Host "  This machine CAN run WSL2 + podman."
+    Write-Host "  This machine CAN run WSL2 + aifs on Windows."
     Write-Host ""
     Write-Host "  Next steps:"
     if (-not $wslInstalled)    { Write-Host "    1. Install WSL2:  wsl --install" }
-    if (-not $podmanInstalled) { Write-Host "    2. Install podman: winget install RedHat.Podman" }
-    Write-Host "    3. podman machine init"
-    Write-Host "    4. podman machine start"
-    Write-Host "    5. Run aifs setup"
+    if (-not $podmanInstalled) { Write-Host "    2. Install podman CLI: winget install RedHat.Podman" }
+    if (-not (WinFspInstalled)) { Write-Host "    3. Install WinFsp: winget install WinFsp.WinFsp (required for `aifs mount`)" }
+    $step = 4
+    if ($wslInstalled -and $podmanInstalled -and (WinFspInstalled)) { $step = 1 }
+    Write-Host "    $step. Ensure your default WSL distro has podman installed"
+    Write-Host "       (aifs will start 'podman system service' automatically)"
+    Write-Host "    $($step + 1). Run aifs setup / aifs start"
 } else {
     Write-Host "  This machine is likely a NESTED VM without nested"
     Write-Host "  virtualization support. Podman/WSL2 will NOT work."

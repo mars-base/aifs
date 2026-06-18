@@ -1,11 +1,15 @@
-# aifs-setup.ps1 — Check virtualization, install WSL + podman, init podman machine
+# aifs-setup.ps1 — Check virtualization, install WSL2 + podman CLI for aifs on Windows
 # Usage: powershell -ExecutionPolicy Bypass -File aifs-setup.ps1 [-Proxy <url>|none]
 #
 # Steps:
 #   1. Check CPU virtualization (VT-x/AMD-V, SLAT, VMM)
 #   2. Install WSL2 if not present (requires admin + reboot)
-#   3. Install podman via winget
-#   4. Init and start podman machine
+#   3. Install Windows podman CLI via winget / MSI
+#   4. Install WinFsp (runtime dependency for `aifs mount`)
+#
+# Note: aifs does NOT use `podman machine init/start`. Instead it starts the
+# WSL podman API service (`podman system service -t 0 tcp://0.0.0.0:2375`)
+# on first `aifs start` and connects via CONTAINER_HOST=tcp://localhost:2375.
 #
 # Download from: http://10.241.21.97:1357/aifs-setup.ps1
 
@@ -388,77 +392,100 @@ if ($podmanInstalled) {
 }
 Write-Host ""
 
+function WinFspInstalled {
+    $keys = @(
+        "HKLM:\SOFTWARE\WOW6432Node\WinFsp",
+        "HKLM:\SOFTWARE\WinFsp"
+    )
+    foreach ($k in $keys) {
+        if (Test-Path $k) { return $true }
+    }
+    # Also look for the main DLL in common install locations.
+    $candidates = @(
+        (Join-Path $env:ProgramFiles "WinFsp\bin\winfsp-x64.dll"),
+        (Join-Path ${env:ProgramFiles(x86)} "WinFsp\bin\winfsp-x64.dll")
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { return $true }
+    }
+    return $false
+}
+
 # ═══════════════════════════════════════════════════════════
-# PHASE 4: Init & Start podman machine
+# PHASE 4: Install WinFsp (runtime dependency for aifs mount)
 # ═══════════════════════════════════════════════════════════
 
-Write-Host "[Phase 4] Podman machine"
+Write-Host "[Phase 4] WinFsp (FUSE runtime)"
+Write-Host "-----------------------------------"
+
+if (WinFspInstalled) {
+    Print-Result "WinFsp installed" "skip"
+} else {
+    Write-Host "  WinFsp is required for `aifs mount` on Windows."
+    $installed = $false
+
+    if (CmdExists "winget") {
+        Write-Host "  Installing WinFsp via winget..."
+        $wingetProc = Start-Process -FilePath "winget" `
+            -ArgumentList "install","WinFsp.WinFsp","--accept-source-agreements","--accept-package-agreements","--silent" `
+            -Wait -PassThru -NoNewWindow
+        if ($wingetProc.ExitCode -eq 0) {
+            Print-Result "WinFsp installed via winget" "ok"
+            $installed = $true
+        } else {
+            Print-Result "winget install WinFsp" "warn" "Exit code: $($wingetProc.ExitCode)"
+        }
+    }
+
+    if (-not $installed -and (CmdExists "choco")) {
+        Write-Host "  Installing WinFsp via Chocolatey..."
+        $chocoProc = Start-Process -FilePath "choco" `
+            -ArgumentList "install","winfsp","-y" `
+            -Wait -PassThru -NoNewWindow
+        if ($chocoProc.ExitCode -eq 0) {
+            Print-Result "WinFsp installed via Chocolatey" "ok"
+            $installed = $true
+        } else {
+            Print-Result "choco install winfsp" "warn" "Exit code: $($chocoProc.ExitCode)"
+        }
+    }
+
+    if (-not $installed) {
+        Print-Result "WinFsp not installed" "warn"
+        Write-Host ""
+        Write-Host "  aifs mount requires WinFsp. Install it manually from:"
+        Write-Host "    https://winfsp.dev/rel/"
+        Write-Host "  Or run one of the following in an elevated terminal:"
+        Write-Host "    winget install WinFsp.WinFsp"
+        Write-Host "    choco install winfsp"
+        Write-Host ""
+    }
+}
+Write-Host ""
+
+# ═══════════════════════════════════════════════════════════
+# PHASE 5: Verify podman CLI (no podman machine needed)
+# ═══════════════════════════════════════════════════════════
+
+Write-Host "[Phase 5] Podman CLI verification"
 Write-Host "-----------------------------------"
 
 if (-not (CmdExists "podman")) {
-    Print-Result "Podman not available" "fail" "Cannot init podman machine"
+    Print-Result "Podman not available" "fail"
     Write-Host ""
-    Write-Host "  Please open a new terminal and run:"
-    Write-Host "    podman machine init"
-    Write-Host "    podman machine start"
+    Write-Host "  Please open a new terminal and verify:"
+    Write-Host "    podman --version"
+    Write-Host ""
     exit 1
 }
 
-# Check if machine already exists
-$machineInfo = cmd.exe /c "chcp 437 >nul & podman machine info" 2>&1
-$machineInfoStr = ($machineInfo | Out-String).Trim()
+$podmanVer = cmd.exe /c "chcp 437 >nul & podman --version" 2>$null
+Print-Result "Podman CLI available" "ok" $podmanVer
 
-$hasMachine = $false
-if ($machineInfoStr -match "VM:\s*$") {
-    # "VM:" with no name means no machine created yet
-    $hasMachine = $false
-} elseif ($machineInfoStr -match "Name:\s+\S+") {
-    $hasMachine = $true
-}
-
-if ($hasMachine) {
-    Print-Result "Podman machine exists" "skip"
-
-    # Check if running
-    $machineLs = cmd.exe /c "chcp 437 >nul & podman machine list --format {{.Running}}" 2>$null
-    $machineLsStr = ($machineLs | Out-String).Trim()
-    if ($machineLsStr -match "(?i)true") {
-        Print-Result "Podman machine running" "ok"
-    } else {
-        Write-Host "  Starting podman machine..."
-        $startProc = Start-Process -FilePath "podman" -ArgumentList "machine","start" -Wait -PassThru -NoNewWindow
-        if ($startProc.ExitCode -eq 0) {
-            Print-Result "Podman machine started" "ok"
-        } else {
-            Print-Result "Podman machine start" "fail" "Exit code: $($startProc.ExitCode)"
-        }
-    }
-} else {
-    Write-Host "  Initializing podman machine (downloading VM image, this takes a few minutes)..."
-    Write-Host "  Running: podman machine init --cpus 4 --memory 4096 --disk-size 100"
-    Write-Host ""
-
-    $initProc = Start-Process -FilePath "podman" `
-        -ArgumentList "machine","init","--cpus","4","--memory","4096","--disk-size","100" `
-        -Wait -PassThru -NoNewWindow
-
-    if ($initProc.ExitCode -ne 0) {
-        Print-Result "Podman machine init" "fail" "Exit code: $($initProc.ExitCode)"
-        Write-Host "  Try manually: podman machine init"
-        exit 1
-    }
-
-    Print-Result "Podman machine initialized" "ok"
-
-    Write-Host "  Starting podman machine..."
-    $startProc = Start-Process -FilePath "podman" -ArgumentList "machine","start" -Wait -PassThru -NoNewWindow
-    if ($startProc.ExitCode -eq 0) {
-        Print-Result "Podman machine started" "ok"
-    } else {
-        Print-Result "Podman machine start" "fail" "Exit code: $($startProc.ExitCode)"
-        Write-Host "  Try manually: podman machine start"
-    }
-}
+Write-Host ""
+Write-Host "  Note: On first 'aifs start' it will start the WSL podman API service"
+Write-Host "        and set CONTAINER_HOST=tcp://localhost:2375 automatically."
+Write-Host ""
 Write-Host ""
 
 # ═══════════════════════════════════════════════════════════
@@ -471,21 +498,32 @@ Write-Host "========================================"
 Write-Host ""
 
 # Quick verification
-$wslOk  = CmdExists "wsl"
-$pmOk   = CmdExists "podman"
+$wslOk    = CmdExists "wsl"
+$pmOk     = CmdExists "podman"
+$winfspOk = WinFspInstalled
 
 if ($wslOk -and $pmOk) {
     $podmanVer = cmd.exe /c "chcp 437 >nul & podman --version" 2>$null
     Write-Host "  WSL2   : installed"
     Write-Host "  Podman : $podmanVer"
+    Write-Host "  WinFsp : $(if ($winfspOk) { 'installed' } else { 'MISSING (required for aifs mount)' })"
     Write-Host ""
     Write-Host "  Next step: install and run aifs"
-    Write-Host "    podman exec -it <container> bash"
+    Write-Host "    aifs config init"
+    Write-Host "    aifs start"
+    if (-not $winfspOk) {
+        Write-Host ""
+        Write-Host "  WARNING: WinFsp is missing. Install it before running `aifs mount`:"
+        Write-Host "    winget install WinFsp.WinFsp"
+        Write-Host "    choco install winfsp"
+        Write-Host "    https://winfsp.dev/rel/"
+    }
     Write-Host ""
 } else {
     Write-Host "  Some components may need attention:"
-    if (-not $wslOk) { Write-Host "    - WSL2: may need reboot" }
-    if (-not $pmOk)  { Write-Host "    - Podman: open a new terminal" }
+    if (-not $wslOk)    { Write-Host "    - WSL2: may need reboot" }
+    if (-not $pmOk)     { Write-Host "    - Podman: open a new terminal" }
+    if (-not $winfspOk) { Write-Host "    - WinFsp: required for `aifs mount`" }
     Write-Host ""
 }
 
