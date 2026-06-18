@@ -52,8 +52,11 @@ cleanup() {
     if [[ -d "$MOUNT_POINT" ]]; then
         "$AIFS_BIN" -c "$CONFIG" umount "$MOUNT_POINT" 2>/dev/null || true
     fi
+    # Remove backup container first (not managed by aifs destroy) to avoid
+    # leaving it behind when destroy hangs.
+    podman rm -f "$BACKUP_CONTAINER" aifs-pg-smoke01 2>/dev/null || true
     "$AIFS_BIN" -c "$CONFIG" destroy -i "$INSTANCE" --clean-data --force 2>/dev/null || true
-    podman rm -f "$CONTAINER" "$BACKUP_CONTAINER" aifs-pg-smoke01 2>/dev/null || true
+    podman rm -f "$CONTAINER" 2>/dev/null || true
     if command -v podman >/dev/null 2>&1; then
         podman unshare rm -rf "$WORK_DIR" 2>/dev/null || rm -rf "$WORK_DIR" 2>/dev/null || true
     else
