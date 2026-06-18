@@ -30,7 +30,10 @@ func New(cfg *config.Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("podman is not installed: %w", err)
 	}
-	dataDir := platform.DefaultConfigDir()
+	dataDir := cfg.BaseDir
+	if dataDir == "" {
+		dataDir = platform.DefaultConfigDir()
+	}
 	return &Manager{
 		cfg:     cfg,
 		podman:  path,

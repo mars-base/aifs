@@ -36,10 +36,14 @@ func NewBackupManager(cfg *config.Config) (*BackupManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("podman is not installed: %w", err)
 	}
+	dataDir := cfg.BaseDir
+	if dataDir == "" {
+		dataDir = platform.DefaultConfigDir()
+	}
 	return &BackupManager{
 		cfg:     cfg,
 		podman:  path,
-		dataDir: platform.DefaultConfigDir(),
+		dataDir: dataDir,
 	}, nil
 }
 
