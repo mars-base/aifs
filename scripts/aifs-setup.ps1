@@ -421,7 +421,7 @@ Write-Host "-----------------------------------"
 if (WinFspInstalled) {
     Print-Result "WinFsp installed" "skip"
 } else {
-    Write-Host "  WinFsp is required for `aifs mount` on Windows."
+    Write-Host "  WinFsp is required for 'aifs mount' on Windows."
     $installed = $false
 
     if (CmdExists "winget") {
@@ -447,6 +447,64 @@ if (WinFspInstalled) {
             $installed = $true
         } else {
             Print-Result "choco install winfsp" "warn" "Exit code: $($chocoProc.ExitCode)"
+        }
+    }
+
+    # Fallback: download MSI from GitHub releases and install silently
+    if (-not $installed) {
+        $msiUrl = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi"
+        Write-Host "  Trying WinFsp MSI from GitHub releases..."
+        Write-Host "  URL: $msiUrl"
+        try {
+            $tmpDir = Join-Path $env:TEMP ("winfsp-" + [System.IO.Path]::GetRandomFileName().Split('.')[0])
+            New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+            $msiPath = Join-Path $tmpDir "winfsp.msi"
+
+            $dlOk = $false
+            # Try with proxy first
+            if ($useProxy) {
+                try {
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Proxy = New-Object System.Net.WebProxy($Proxy, $true)
+                    $wc.DownloadFile($msiUrl, $msiPath)
+                    if ((Test-Path $msiPath) -and ((Get-Item $msiPath).Length -gt 500KB)) {
+                        $dlOk = $true
+                    }
+                } catch {
+                    Write-Host "  Proxy download failed: $($_.Exception.Message)"
+                }
+            }
+            # Try direct download
+            if (-not $dlOk) {
+                try {
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Proxy = [System.Net.GlobalProxySelection]::GetEmptyWebProxy()
+                    $wc.DownloadFile($msiUrl, $msiPath)
+                    if ((Test-Path $msiPath) -and ((Get-Item $msiPath).Length -gt 500KB)) {
+                        $dlOk = $true
+                    }
+                } catch {
+                    Write-Host "  Direct download failed: $($_.Exception.Message)"
+                }
+            }
+
+            if ($dlOk) {
+                Write-Host "  Running msiexec /i winfsp.msi /qn /norestart..."
+                $msiProc = Start-Process -FilePath "msiexec.exe" `
+                    -ArgumentList "/i",$msiPath,"/qn","/norestart" `
+                    -Wait -PassThru -NoNewWindow
+                if ($msiProc.ExitCode -eq 0) {
+                    Print-Result "WinFsp installed via MSI" "ok"
+                    $installed = $true
+                } else {
+                    Print-Result "WinFsp MSI install" "warn" "msiexec exit code: $($msiProc.ExitCode)"
+                }
+            } else {
+                Print-Result "WinFsp MSI download" "warn" "Could not download from GitHub"
+            }
+            Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {
+            Print-Result "WinFsp MSI fallback" "warn" "$($_.Exception.Message)"
         }
     }
 
@@ -506,14 +564,15 @@ if ($wslOk -and $pmOk) {
     $podmanVer = cmd.exe /c "chcp 437 >nul & podman --version" 2>$null
     Write-Host "  WSL2   : installed"
     Write-Host "  Podman : $podmanVer"
-    Write-Host "  WinFsp : $(if ($winfspOk) { 'installed' } else { 'MISSING (required for aifs mount)' })"
+    $winfspStatus = if ($winfspOk) { 'installed' } else { 'MISSING (required for aifs mount)' }
+    Write-Host "  WinFsp : $winfspStatus"
     Write-Host ""
     Write-Host "  Next step: install and run aifs"
     Write-Host "    aifs config init"
     Write-Host "    aifs start"
     if (-not $winfspOk) {
         Write-Host ""
-        Write-Host "  WARNING: WinFsp is missing. Install it before running `aifs mount`:"
+        Write-Host "  WARNING: WinFsp is missing. Install it before running 'aifs mount':"
         Write-Host "    winget install WinFsp.WinFsp"
         Write-Host "    choco install winfsp"
         Write-Host "    https://winfsp.dev/rel/"
@@ -523,7 +582,7 @@ if ($wslOk -and $pmOk) {
     Write-Host "  Some components may need attention:"
     if (-not $wslOk)    { Write-Host "    - WSL2: may need reboot" }
     if (-not $pmOk)     { Write-Host "    - Podman: open a new terminal" }
-    if (-not $winfspOk) { Write-Host "    - WinFsp: required for `aifs mount`" }
+    if (-not $winfspOk) { Write-Host "    - WinFsp: required for 'aifs mount'" }
     Write-Host ""
 }
 
