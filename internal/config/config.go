@@ -51,8 +51,8 @@ type PodmanConfig struct {
 	ContainerName string `yaml:"container_name"` // PG container name, default aifs-pg
 	DataDir       string `yaml:"data_dir"`       // PG data directory (host path), default ~/.aifs/dbdata/<name>/data
 	ImageTag      string `yaml:"image_tag"`      // image tag, default ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0
-	HostPort      int    `yaml:"host_port"`       // host port for PG mapping, 0=auto-assign from 25432 (Windows: 5432)
-	SSHPort       int    `yaml:"ssh_port"`        // SSH port for pgbackrest (Windows only), 0=auto-assign from 2222
+	HostPort      int    `yaml:"host_port"`       // host port for PG mapping, 0=auto-assign from 25432
+	SSHPort       int    `yaml:"ssh_port"`        // SSH port for pgbackrest (Windows only), 0=auto-assign from 32201
 	Network       string `yaml:"network"`         // podman network name, default aifs-net
 }
 
@@ -440,18 +440,6 @@ func (c *Config) ApplyDefaults() {
 		c.Instances[name] = inst
 	}
 
-	// On Windows, migrate old instances that were assigned host_port in the
-	// old Unix base range (25432–25499) but actually ran on hardcoded port 5432.
-	// Reset them so they get re-assigned from the new Windows base (5432).
-	if runtime.GOOS == "windows" {
-		for name, inst := range c.Instances {
-			if inst.Podman.HostPort >= 25432 && inst.Podman.HostPort <= 25499 && inst.Podman.SSHPort == 0 {
-				inst.Podman.HostPort = 0
-				c.Instances[name] = inst
-			}
-		}
-	}
-
 	// Auto-assign host and SSH ports for instances that don't have one set.
 	c.autoAssignPorts()
 }
@@ -459,7 +447,7 @@ func (c *Config) ApplyDefaults() {
 // autoAssignPorts assigns sequential host ports (PG + SSH) to instances that
 // have HostPort=0 / SSHPort=0. On Unix, PG ports start at 25432 and SSH ports
 // are not assigned (bridge network uses port 22). On Windows, PG ports start at
-// 5432 and SSH ports start at 2222 (host networking — each instance needs a
+// 25432 and SSH ports start at 32201 (host networking — each instance needs a
 // unique port on the shared WSL network stack).
 //
 // Instances are processed in alphabetical order by name. Explicitly-set ports
@@ -481,12 +469,12 @@ func (c *Config) autoAssignPorts() {
 		}
 	}
 
-	// Platform-appropriate port bases
+	// PG starts at 25432 on all platforms. SSH is only needed on
+	// Windows (host networking), starting at 32201.
 	pgBase := 25432
 	sshBase := 0
 	if runtime.GOOS == "windows" {
-		pgBase = 5432
-		sshBase = 2222
+		sshBase = 32201
 	}
 
 	// Probe already-used ports so multiple config files (or non-aifs

@@ -79,7 +79,7 @@ func (m *BackupManager) WriteSSHConfig() (string, error) {
 			}
 			sshPort := inst.Podman.SSHPort
 			if sshPort == 0 {
-				sshPort = 2222
+				sshPort = 32201
 			}
 			fmt.Fprintf(&sb, "Host %s\n", inst.Podman.ContainerName)
 			sb.WriteString("    HostName 127.0.0.1\n")
