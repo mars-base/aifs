@@ -234,7 +234,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file %s: %w", path, err)
 	}
 
-	cfg.applyDefaults()
+	cfg.ApplyDefaults()
 	return cfg, nil
 }
 
@@ -312,7 +312,7 @@ func (c *Config) EffectiveFilesystem() FilesystemConfig {
 }
 
 // applyDefaults fills zero-value fields with their defaults.
-func (c *Config) applyDefaults() {
+func (c *Config) ApplyDefaults() {
 	d := Default()
 
 	// Postgres

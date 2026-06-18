@@ -113,6 +113,8 @@ Examples:
 			cfg.Instances[configAdd] = *inst
 		}
 
+		cfg.ApplyDefaults()
+
 		if err := cfg.Save(path); err != nil {
 			return err
 		}

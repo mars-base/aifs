@@ -80,6 +80,7 @@ Examples:
 
 		// Add instance to config
 		cfg.Instances[cfgInstance] = *inst
+		cfg.ApplyDefaults()
 		if err := cfg.Save(path); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}
