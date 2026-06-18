@@ -24,7 +24,6 @@ $ForceClean = $env:FORCE_CLEAN -eq "1"
 
 $Suffix = "pitrwin-$PID"
 $BackupContainer = "aifs-backup-${Suffix}"
-$NetworkName = "aifs-net-${Suffix}"
 $Container = "aifs-pg-${Instance}"
 
 $WorkDir = Join-Path $env:TEMP "aifs-pitr-win-${Suffix}"
@@ -96,7 +95,6 @@ function Cleanup {
     try { Invoke-Aifs umount $MountPoint } catch { }
     try { Invoke-Aifs stop } catch { }
     try { & podman rm -f $Container $BackupContainer 2>$null } catch { }
-    try { & podman network rm -f $NetworkName 2>$null } catch { }
     if (Test-Path $WorkDir) {
         Remove-Item -Recurse -Force $WorkDir -ErrorAction SilentlyContinue
     }
@@ -121,7 +119,6 @@ Write-Host "=== aifs filesystem PITR end-to-end test (Windows) ==="
 Write-Host "Instance:       ${Instance}"
 Write-Host "Work dir:       ${WorkDir}"
 Write-Host "Mount point:    ${MountPoint}"
-Write-Host "Backup network: ${NetworkName}"
 Write-Host "Backup container: ${BackupContainer}"
 Write-Host "Host port:      ${HostPort}"
 Write-Host ""
@@ -131,9 +128,8 @@ New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
 Write-Host "=== 1. config init ==="
 Invoke-Aifs config init -o $Config --add $Instance --base-dir $WorkDir
 
-# Isolate the backup container and network from any existing aifs environment.
+# Isolate the backup container from any existing aifs environment.
 $cfgLines = Get-Content $Config
-$cfgLines = $cfgLines -replace '^network: aifs-net$', "network: ${NetworkName}"
 $cfgLines = $cfgLines -replace '^( *)container_name: aifs-backup$', "`$1container_name: ${BackupContainer}"
 $cfgLines = $cfgLines -replace '^( *)host_port: .*$', "`$1host_port: ${HostPort}"
 $cfgLines | Set-Content -Path $Config -Encoding UTF8
