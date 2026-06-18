@@ -136,19 +136,33 @@ func DefaultConfigPath() string {
 	return filepath.Join(DefaultConfigDir(), "config.yaml")
 }
 
-// GetUsedPorts returns the set of TCP ports currently listening on the local host.
-// On Windows this queries the WSL podman machine (host networking — all
-// containers share the WSL network stack so we must probe). On other platforms
-// this returns nil since bridge networking gives each container its own IP.
+// GetUsedPorts returns the set of TCP ports currently listening on the container
+// host. All platforms now use host networking so every instance shares the same
+// network stack — we must probe to avoid port collisions.
+//
+//	Linux:   ss -tlnH directly on the host
+//	macOS:   podman machine ssh <name> ss -tlnH (containers share the VM network)
+//	Windows: wsl -d <distro> --exec ss -tlnH (containers share the WSL network)
 func GetUsedPorts() map[int]bool {
-	if Detect() != Windows {
+	var cmd *exec.Cmd
+	switch Detect() {
+	case Linux:
+		cmd = exec.Command("ss", "-tlnH")
+	case MacOS:
+		name := os.Getenv("PODMAN_MACHINE_NAME")
+		if name == "" {
+			name = "podman-machine-default"
+		}
+		cmd = exec.Command("podman", "machine", "ssh", name, "ss", "-tlnH")
+	case Windows:
+		distro := os.Getenv("PODMAN_MACHINE_NAME")
+		if distro == "" {
+			distro = "podman-machine-default"
+		}
+		cmd = exec.Command("wsl", "-d", distro, "--exec", "ss", "-tlnH")
+	default:
 		return nil
 	}
-	distro := os.Getenv("PODMAN_MACHINE_NAME")
-	if distro == "" {
-		distro = "podman-machine-default"
-	}
-	cmd := exec.Command("wsl", "-d", distro, "--exec", "ss", "-tlnH")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil // can't probe, fall back to sequential assignment

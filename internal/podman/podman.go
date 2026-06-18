@@ -5,7 +5,6 @@ package podman
 import (
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,41 +147,10 @@ func (m *Manager) buildImage(tag string) error {
 
 // ─── Network management ──────────────────────────────────────────
 
-// EnsureNetwork creates the shared podman network if it doesn't exist.
-// On Windows (WSL2) this is a no-op — containers use --network host because
-// WSL2's kernel lacks nftables for netavark bridge networking.
-// All aifs containers (PG + backup) communicate via this bridge network,
-// using container names as DNS hostnames.
+// EnsureNetwork is a no-op — all platforms use host networking, so no bridge
+// network needs to be created.
 func (m *Manager) EnsureNetwork() error {
-	if runtime.GOOS == "windows" {
-		return nil // host networking, no bridge needed
-	}
-	netName := m.cfg.Podman.Network
-	exists, err := m.networkExists(netName)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	fmt.Printf("→ Creating podman network: %s\n", netName)
-	if _, err := m.run("network", "create", netName); err != nil {
-		return fmt.Errorf("creating network %s: %w", netName, err)
-	}
 	return nil
-}
-
-func (m *Manager) networkExists(name string) (bool, error) {
-	out, err := m.run("network", "ls", "--format", "{{.Name}}")
-	if err != nil {
-		return false, err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) == name {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // EnsureDirs creates required data directories on the host.
@@ -404,26 +372,15 @@ func removeHostDir(podmanPath, dir string) error {
 	return nil
 }
 
-// PGIsReady checks if PostgreSQL is accepting TCP connections on the
-// host-mapped port. This works on all platforms, including Windows where the
+// PGIsReady checks if PostgreSQL is accepting connections by running pg_isready
+// inside the container. This works on all platforms including those where the
 // host pg_isready binary may not be available.
 func (m *Manager) PGIsReady() (bool, error) {
-	if runtime.GOOS == "windows" {
-		// In host network mode on WSL2, PG listens on the WSL VM's port 5432,
-		// not on the configured HostPort. Query pg_isready inside the container.
-		return m.pgIsReadyWSL()
-	}
-	addr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", m.cfg.Podman.HostPort))
-	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-	if err != nil {
-		return false, nil
-	}
-	_ = conn.Close()
-	return true, nil
+	return m.pgIsReadyContainer()
 }
 
-// pgIsReadyWSL checks PG readiness via podman exec inside WSL.
-func (m *Manager) pgIsReadyWSL() (bool, error) {
+// pgIsReadyContainer checks PG readiness via podman exec inside the container.
+func (m *Manager) pgIsReadyContainer() (bool, error) {
 	args := []string{"exec", m.cfg.Podman.ContainerName, "pg_isready", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database}
 	out, err := m.run(args...)
 	if err != nil {
@@ -458,7 +415,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 
 	args := []string{
 		"run", "--rm",
-		"--network", m.cfg.Podman.Network,
+		"--network", "host",
 		"-v", fmt.Sprintf("%s:/var/lib/postgresql", hostMountPath(m.cfg.Podman.DataDir)),
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(m.cfg.Backup.DataDir)),
 		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
@@ -548,21 +505,20 @@ func (m *Manager) createContainer() error {
 	args := []string{
 		"run", "-d",
 		"--name", m.cfg.Podman.ContainerName,
+		"--network", "host",
 	}
 
-	if runtime.GOOS == "windows" {
-		// WSL2: use host networking — netavark bridge fails on kernel 5.10 (no nftables).
-		// Each PG instance gets a unique port via PGPORT / AIFS_SSH_PORT env vars.
-		args = append(args, "--network", "host")
-		args = append(args,
-			"-e", fmt.Sprintf("PGPORT=%d", m.cfg.Podman.HostPort),
-			"-e", fmt.Sprintf("AIFS_SSH_PORT=%d", m.cfg.Podman.SSHPort),
-		)
-	} else {
-		args = append(args,
-			"--network", m.cfg.Podman.Network,
-			"-p", fmt.Sprintf("%d:5432", hostPort),
-		)
+	// Each PG instance gets a unique port via PGPORT / AIFS_SSH_PORT env vars.
+	args = append(args,
+		"-e", fmt.Sprintf("PGPORT=%d", m.cfg.Podman.HostPort),
+		"-e", fmt.Sprintf("AIFS_SSH_PORT=%d", m.cfg.Podman.SSHPort),
+	)
+
+	// macOS: podman machine runs inside a VM.  --network host shares the VM's
+	// network stack, but the Mac host still needs explicit port forwarding to
+	// reach the container.
+	if platform.Detect() == platform.MacOS {
+		args = append(args, "-p", fmt.Sprintf("%d:%d", hostPort, hostPort))
 	}
 
 	args = append(args,
@@ -605,13 +561,12 @@ func (m *Manager) createContainer() error {
 // Returns the path to the config file to be mounted.
 func (m *Manager) writeInstancePgbackrestConf() (string, error) {
 	stanza := m.cfg.PITR.PgBackRestStanza
-	var content string
-	if runtime.GOOS == "windows" {
-		// On Windows (host networking), each PG instance may listen on a
-		// non-default port. Without pg1-port, the remote pgbackrest process
-		// (over SSH) defaults to 5432 — but sshd does not forward the PGPORT
-		// env var, so instances with custom ports fail stanza-create.
-		content = fmt.Sprintf(`[%s]
+
+	// All platforms use host networking now: each PG instance listens on a
+	// unique port (PGPORT env var / pg1-port below).  Without pg1-port, the
+	// remote pgbackrest process (over SSH) defaults to 5432 — but sshd does
+	// not forward PGPORT, so instances with custom ports fail stanza-create.
+	content := fmt.Sprintf(`[%s]
 pg1-path=/var/lib/postgresql/data
 pg1-user=%s
 pg1-port=%d
@@ -621,17 +576,6 @@ repo1-path=/var/lib/pgbackrest
 repo1-retention-full=%d
 log-level-console=info
 `, stanza, m.cfg.Postgres.User, m.cfg.Podman.HostPort, m.cfg.Backup.RetentionFull)
-	} else {
-		content = fmt.Sprintf(`[%s]
-pg1-path=/var/lib/postgresql/data
-pg1-user=%s
-
-[global]
-repo1-path=/var/lib/pgbackrest
-repo1-retention-full=%d
-log-level-console=info
-`, stanza, m.cfg.Postgres.User, m.cfg.Backup.RetentionFull)
-	}
 
 	confPath := filepath.Join(m.dataDir, fmt.Sprintf("pgbackrest-%s.conf", m.cfg.Podman.ContainerName))
 

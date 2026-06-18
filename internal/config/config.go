@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -52,7 +51,7 @@ type PodmanConfig struct {
 	DataDir       string `yaml:"data_dir"`       // PG data directory (host path), default ~/.aifs/dbdata/<name>/data
 	ImageTag      string `yaml:"image_tag"`      // image tag, default ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0
 	HostPort      int    `yaml:"host_port"`       // host port for PG mapping, 0=auto-assign from 25432
-	SSHPort       int    `yaml:"ssh_port"`        // SSH port for pgbackrest (Windows only), 0=auto-assign from 32201
+	SSHPort       int    `yaml:"ssh_port"`        // SSH port for pgbackrest, 0=auto-assign from 32201
 	Network       string `yaml:"network"`         // podman network name, default aifs-net
 }
 
@@ -445,10 +444,9 @@ func (c *Config) ApplyDefaults() {
 }
 
 // autoAssignPorts assigns sequential host ports (PG + SSH) to instances that
-// have HostPort=0 / SSHPort=0. On Unix, PG ports start at 25432 and SSH ports
-// are not assigned (bridge network uses port 22). On Windows, PG ports start at
-// 25432 and SSH ports start at 32201 (host networking — each instance needs a
-// unique port on the shared WSL network stack).
+// have HostPort=0 / SSHPort=0. PG ports start at 25432, SSH ports start at
+// 32201 (host networking — each instance needs a unique port on the shared
+// host network stack).
 //
 // Instances are processed in alphabetical order by name. Explicitly-set ports
 // are respected and skipped. The "default" instance always gets the base port.
@@ -469,13 +467,9 @@ func (c *Config) autoAssignPorts() {
 		}
 	}
 
-	// PG starts at 25432 on all platforms. SSH is only needed on
-	// Windows (host networking), starting at 32201.
+	// All platforms use host networking: PG from 25432, SSH from 32201.
 	pgBase := 25432
-	sshBase := 0
-	if runtime.GOOS == "windows" {
-		sshBase = 32201
-	}
+	sshBase := 32201
 
 	// Probe already-used ports so multiple config files (or non-aifs
 	// services) on the same host don't collide. Only meaningful on

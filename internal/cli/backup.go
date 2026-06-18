@@ -143,27 +143,7 @@ The backup container is shared across all database instances.`,
 		// 4. Create and start backup container
 		fmt.Println("\n→ Step 4/4: Starting backup container...")
 
-		// Collect IP addresses of all PITR-enabled PG containers for /etc/hosts.
-		hostEntries := make(map[string]string)
-		for name, inst := range cfg.Instances {
-			if !inst.PITR.Enabled {
-				continue
-			}
-			ipm, err := podman.New(cfg)
-			if err != nil {
-				return fmt.Errorf("creating podman manager for %s: %w", name, err)
-			}
-			if err := cfg.SetInstance(name); err != nil {
-				return fmt.Errorf("setting instance %s: %w", name, err)
-			}
-			ip, err := ipm.ContainerIP()
-			if err != nil {
-				return fmt.Errorf("getting IP for %s: %w", name, err)
-			}
-			hostEntries[inst.Podman.ContainerName] = ip
-		}
-
-		if err := bm.EnsureBackupContainer(confPath, hostEntries); err != nil {
+		if err := bm.EnsureBackupContainer(confPath); err != nil {
 			return err
 		}
 

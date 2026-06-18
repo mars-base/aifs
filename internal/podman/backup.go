@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
@@ -64,41 +63,30 @@ func (m *BackupManager) SSHConfigPath() string {
 }
 
 // WriteSSHConfig writes an SSH client config that disables host key checking
-// for PG containers. On Windows (host networking), per-instance Host aliases
-// map container names to 127.0.0.1 with unique SSH ports. On Unix, a wildcard
-// Host matches all aifs-pg-* containers via bridge DNS on port 22.
+// for PG containers. All platforms use host networking — per-instance Host
+// aliases map container names to 127.0.0.1 with unique SSH ports.
 func (m *BackupManager) WriteSSHConfig() (string, error) {
-	var conf string
-	if runtime.GOOS == "windows" {
-		// Per-instance Host aliases: each PG container name maps to
-		// 127.0.0.1 with its unique SSH port (host networking).
-		var sb strings.Builder
-		for _, inst := range m.cfg.Instances {
-			if !inst.PITR.Enabled || inst.Podman.ContainerName == "" {
-				continue
-			}
-			sshPort := inst.Podman.SSHPort
-			if sshPort == 0 {
-				sshPort = 32201
-			}
-			fmt.Fprintf(&sb, "Host %s\n", inst.Podman.ContainerName)
-			sb.WriteString("    HostName 127.0.0.1\n")
-			sb.WriteString("    StrictHostKeyChecking no\n")
-			sb.WriteString("    UserKnownHostsFile /dev/null\n")
-			sb.WriteString("    IdentityFile /root/.ssh/id_rsa\n")
-			sb.WriteString("    User postgres\n")
-			fmt.Fprintf(&sb, "    Port %d\n\n", sshPort)
+	// Per-instance Host aliases: each PG container name maps to
+	// 127.0.0.1 with its unique SSH port (host networking).
+	var sb strings.Builder
+	for _, inst := range m.cfg.Instances {
+		if !inst.PITR.Enabled || inst.Podman.ContainerName == "" {
+			continue
 		}
-		conf = sb.String()
-	} else {
-		conf = `Host aifs-pg-*
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-    IdentityFile /root/.ssh/id_rsa
-    User postgres
-    Port 22
-`
+		sshPort := inst.Podman.SSHPort
+		if sshPort == 0 {
+			sshPort = 32201
+		}
+		fmt.Fprintf(&sb, "Host %s\n", inst.Podman.ContainerName)
+		sb.WriteString("    HostName 127.0.0.1\n")
+		sb.WriteString("    StrictHostKeyChecking no\n")
+		sb.WriteString("    UserKnownHostsFile /dev/null\n")
+		sb.WriteString("    IdentityFile /root/.ssh/id_rsa\n")
+		sb.WriteString("    User postgres\n")
+		fmt.Fprintf(&sb, "    Port %d\n\n", sshPort)
 	}
+	conf := sb.String()
+
 	path := m.SSHConfigPath()
 
 	if runtime.GOOS == "windows" {
@@ -267,37 +255,10 @@ func (m *BackupManager) buildBackupImage(tag string) error {
 
 // ─── Network management ──────────────────────────────────────────
 
-// EnsureNetwork creates the shared podman network if it doesn't exist.
+// EnsureNetwork is a no-op — all platforms use host networking, so no bridge
+// network needs to be created.
 func (m *BackupManager) EnsureNetwork() error {
-	if runtime.GOOS == "windows" {
-		return nil // host networking, no bridge needed
-	}
-	netName := m.cfg.Podman.Network
-	exists, err := m.networkExists(netName)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	fmt.Printf("→ Creating podman network: %s\n", netName)
-	if _, err := m.run("network", "create", netName); err != nil {
-		return fmt.Errorf("creating network %s: %w", netName, err)
-	}
 	return nil
-}
-
-func (m *BackupManager) networkExists(name string) (bool, error) {
-	out, err := m.run("network", "ls", "--format", "{{.Name}}")
-	if err != nil {
-		return false, err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) == name {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // ─── Directory management ──────────────────────────────────────
@@ -344,39 +305,9 @@ func (m *BackupManager) EnsureBackupInfra() error {
 	if err != nil {
 		return err
 	}
-	hostEntries, err := m.collectPGContainerIPs()
-	if err != nil {
-		return err
-	}
-	return m.EnsureBackupContainer(confPath, hostEntries)
+	return m.EnsureBackupContainer(confPath)
 }
 
-// collectPGContainerIPs returns the current IP addresses of all PITR-enabled
-// PG containers. Containers that do not exist are skipped.
-// On Windows with host networking, returns empty map (no --add-host needed).
-func (m *BackupManager) collectPGContainerIPs() (map[string]string, error) {
-	if runtime.GOOS == "windows" {
-		return nil, nil // host networking: pg1-host=127.0.0.1, no --add-host
-	}
-	hostEntries := make(map[string]string)
-	for _, inst := range m.cfg.Instances {
-		if !inst.PITR.Enabled || inst.Podman.ContainerName == "" {
-			continue
-		}
-		out, err := exec.Command(m.podman, "inspect", inst.Podman.ContainerName,
-			"--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}").Output()
-		if err != nil {
-			// Container may not exist yet; skip it.
-			continue
-		}
-		ip := strings.TrimSpace(string(out))
-		if ip == "" {
-			continue
-		}
-		hostEntries[inst.Podman.ContainerName] = ip
-	}
-	return hostEntries, nil
-}
 
 // ─── pgbackrest.conf generation ──────────────────────────────────
 
@@ -435,10 +366,11 @@ func (m *BackupManager) WritePgbackrestConf() (string, error) {
 
 // ─── Container management ─────────────────────────────────────────────
 
-// EnsureBackupContainer creates and starts the backup container if it doesn't exist.
-// hostEntries maps PG container hostnames to IPs for /etc/hosts injection.
-// Caller is responsible for calling EnsureNetwork() first.
-func (m *BackupManager) EnsureBackupContainer(confPath string, hostEntries map[string]string) error {
+// EnsureBackupContainer creates and starts the backup container, recreating it
+// if it already exists. All platforms use host networking — the container is
+// always refreshed to pick up the latest SSH config (per-instance ports). The
+// container runs sleep-infinity, so recreation is cheap.
+func (m *BackupManager) EnsureBackupContainer(confPath string) error {
 	containerName := m.cfg.Backup.ContainerName
 
 	exists, err := m.containerExists(containerName)
@@ -447,80 +379,14 @@ func (m *BackupManager) EnsureBackupContainer(confPath string, hostEntries map[s
 	}
 
 	if exists {
-		// On Windows (host networking), always recreate the backup container
-		// to pick up SSH config changes (per-instance ports). The container
-		// is sleep-infinity, so recreation is cheap.
-		if runtime.GOOS == "windows" {
-			fmt.Println("→ Recreating backup container to refresh SSH config...")
-			if _, err := m.run("rm", "-f", containerName); err != nil {
-				return fmt.Errorf("removing backup container: %w", err)
-			}
-			return m.createBackupContainer(confPath, hostEntries)
+		fmt.Println("→ Recreating backup container to refresh SSH config...")
+		if _, err := m.run("rm", "-f", containerName); err != nil {
+			return fmt.Errorf("removing backup container: %w", err)
 		}
-
-		// Check whether the existing container has the required --add-host entries.
-		// PG container IPs can change after stop/start, so recreate if stale.
-		stale, err := m.hostEntriesStale(hostEntries)
-		if err != nil {
-			return fmt.Errorf("checking backup container host entries: %w", err)
-		}
-		if stale {
-			fmt.Println("→ Backup container host entries are stale, recreating...")
-			if _, err := m.run("rm", "-f", containerName); err != nil {
-				return fmt.Errorf("removing stale backup container: %w", err)
-			}
-			return m.createBackupContainer(confPath, hostEntries)
-		}
-
-		running, err := m.containerRunning(containerName)
-		if err != nil {
-			return err
-		}
-		if !running {
-			fmt.Println("→ Starting backup container...")
-			return m.StartBackupContainer()
-		}
-
-		fmt.Printf("→ Backup container %s is already running\n", containerName)
-		return nil
 	}
 
 	fmt.Println("→ Creating and starting backup container...")
-	return m.createBackupContainer(confPath, hostEntries)
-}
-
-// hostEntriesStale returns true if the running backup container's ExtraHosts
-// do not contain all required hostEntries.
-func (m *BackupManager) hostEntriesStale(hostEntries map[string]string) (bool, error) {
-	out, err := m.run("inspect", m.cfg.Backup.ContainerName, "--format", "{{json .HostConfig.ExtraHosts}}")
-	if err != nil {
-		return false, err
-	}
-	out = strings.TrimSpace(out)
-	if out == "" || out == "null" {
-		return len(hostEntries) > 0, nil
-	}
-
-	var extraHosts []string
-	if err := json.Unmarshal([]byte(out), &extraHosts); err != nil {
-		// Fallback: parse raw string slice if JSON unmarshal fails.
-		extraHosts = strings.Split(strings.Trim(out, "[]"), " ")
-	}
-
-	current := make(map[string]string, len(extraHosts))
-	for _, entry := range extraHosts {
-		parts := strings.SplitN(entry, ":", 2)
-		if len(parts) == 2 {
-			current[parts[0]] = parts[1]
-		}
-	}
-
-	for host, ip := range hostEntries {
-		if current[host] != ip {
-			return true, nil
-		}
-	}
-	return false, nil
+	return m.createBackupContainer(confPath)
 }
 
 // StartBackupContainer starts the backup container.
@@ -640,7 +506,7 @@ func (m *BackupManager) containerRunning(name string) (bool, error) {
 	return strings.TrimSpace(out) == name, nil
 }
 
-func (m *BackupManager) createBackupContainer(confPath string, hostEntries map[string]string) error {
+func (m *BackupManager) createBackupContainer(confPath string) error {
 	keys := m.SSHKeyPaths()
 
 	// Ensure SSH config is written before mounting.
@@ -652,18 +518,7 @@ func (m *BackupManager) createBackupContainer(confPath string, hostEntries map[s
 	args := []string{
 		"run", "-d",
 		"--name", m.cfg.Backup.ContainerName,
-	}
-
-	if runtime.GOOS == "windows" {
-		// WSL2: host networking — no bridge, no --add-host needed.
-		args = append(args, "--network", "host")
-	} else {
-		args = append(args, "--network", m.cfg.Podman.Network)
-		// Add /etc/hosts entries for PG containers so pgbackrest can resolve pg1-host.
-		// Required when the rootless podman network backend does not provide DNS.
-		for hostname, ip := range hostEntries {
-			args = append(args, "--add-host", fmt.Sprintf("%s:%s", hostname, ip))
-		}
+		"--network", "host",
 	}
 
 	args = append(args,
