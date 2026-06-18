@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 )
 
 // OS represents the operating system type.
@@ -132,6 +134,34 @@ func DefaultConfigDir() string {
 // DefaultConfigPath returns the aifs configuration file path.
 func DefaultConfigPath() string {
 	return filepath.Join(DefaultConfigDir(), "config.yaml")
+}
+
+// GetUsedPorts returns the set of TCP ports currently listening on the local host.
+// On Windows this queries the WSL podman machine (host networking — all
+// containers share the WSL network stack so we must probe). On other platforms
+// this returns nil since bridge networking gives each container its own IP.
+func GetUsedPorts() map[int]bool {
+	if Detect() != Windows {
+		return nil
+	}
+	distro := os.Getenv("PODMAN_MACHINE_NAME")
+	if distro == "" {
+		distro = "podman-machine-default"
+	}
+	cmd := exec.Command("wsl", "-d", distro, "--exec", "ss", "-tlnH")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil // can't probe, fall back to sequential assignment
+	}
+	// ss -tlnH output lines:  LISTEN  0  4096  127.0.0.1:5432  0.0.0.0:*
+	re := regexp.MustCompile(`:(\d+)\s`)
+	used := make(map[int]bool)
+	for _, match := range re.FindAllStringSubmatch(string(out), -1) {
+		if port, err := strconv.Atoi(match[1]); err == nil {
+			used[port] = true
+		}
+	}
+	return used
 }
 
 // --- Internal helpers ---

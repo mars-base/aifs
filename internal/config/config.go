@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -50,7 +51,8 @@ type PodmanConfig struct {
 	ContainerName string `yaml:"container_name"` // PG container name, default aifs-pg
 	DataDir       string `yaml:"data_dir"`       // PG data directory (host path), default ~/.aifs/dbdata/<name>/data
 	ImageTag      string `yaml:"image_tag"`      // image tag, default ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0
-	HostPort      int    `yaml:"host_port"`       // host port for PG mapping, 0=auto-assign from 25432
+	HostPort      int    `yaml:"host_port"`       // host port for PG mapping, 0=auto-assign from 25432 (Windows: 5432)
+	SSHPort       int    `yaml:"ssh_port"`        // SSH port for pgbackrest (Windows only), 0=auto-assign from 2222
 	Network       string `yaml:"network"`         // podman network name, default aifs-net
 }
 
@@ -139,7 +141,8 @@ func (c *Config) InstanceDefaults(name string) *InstanceConfig {
 			ContainerName: "aifs-pg-" + name,
 			DataDir:       filepath.Join(baseDir, "dbdata", name, "data"),
 			ImageTag:      c.Podman.ImageTag,
-			HostPort:      0, // auto-assigned starting from 25432
+			HostPort:      0, // auto-assigned
+			SSHPort:       0, // auto-assigned (Windows only)
 		},
 		PITR: PITRConfig{
 			Enabled:          true,
@@ -192,10 +195,14 @@ func (c *Config) SetInstance(name string) error {
 	if inst.Podman.ImageTag != "" {
 		c.Podman.ImageTag = inst.Podman.ImageTag
 	}
-	// HostPort maps to Postgres.Port for external connections (GetPostgresURL)
+	// HostPort maps to Postgres.Port for external connections (GetPostgresURL).
 	if inst.Podman.HostPort != 0 {
 		c.Podman.HostPort = inst.Podman.HostPort
 		c.Postgres.Port = inst.Podman.HostPort
+	}
+	// SSHPort is used on Windows (host networking) for per-instance SSH port.
+	if inst.Podman.SSHPort != 0 {
+		c.Podman.SSHPort = inst.Podman.SSHPort
 	}
 
 	// Merge PITR config
@@ -415,6 +422,9 @@ func (c *Config) ApplyDefaults() {
 		if inst.Podman.HostPort == 0 {
 			inst.Podman.HostPort = def.Podman.HostPort
 		}
+		if inst.Podman.SSHPort == 0 {
+			inst.Podman.SSHPort = def.Podman.SSHPort
+		}
 		if inst.PITR.PgBackRestStanza == "" {
 			inst.PITR.PgBackRestStanza = def.PITR.PgBackRestStanza
 		}
@@ -430,22 +440,38 @@ func (c *Config) ApplyDefaults() {
 		c.Instances[name] = inst
 	}
 
-	// Auto-assign host ports for instances that don't have one set.
-	// Ports start at 5432 and increment. Explicitly-set ports are reserved.
-	c.autoAssignHostPorts()
+	// On Windows, migrate old instances that were assigned host_port in the
+	// old Unix base range (25432–25499) but actually ran on hardcoded port 5432.
+	// Reset them so they get re-assigned from the new Windows base (5432).
+	if runtime.GOOS == "windows" {
+		for name, inst := range c.Instances {
+			if inst.Podman.HostPort >= 25432 && inst.Podman.HostPort <= 25499 && inst.Podman.SSHPort == 0 {
+				inst.Podman.HostPort = 0
+				c.Instances[name] = inst
+			}
+		}
+	}
+
+	// Auto-assign host and SSH ports for instances that don't have one set.
+	c.autoAssignPorts()
 }
 
-// autoAssignHostPorts assigns sequential host ports to instances that have HostPort=0.
-// Instances are processed in alphabetical order by name. Explicitly-set ports are reserved
-// and skipped. Ports start at 25432. The "default" instance always gets 25432 if not explicitly set.
-func (c *Config) autoAssignHostPorts() {
+// autoAssignPorts assigns sequential host ports (PG + SSH) to instances that
+// have HostPort=0 / SSHPort=0. On Unix, PG ports start at 25432 and SSH ports
+// are not assigned (bridge network uses port 22). On Windows, PG ports start at
+// 5432 and SSH ports start at 2222 (host networking — each instance needs a
+// unique port on the shared WSL network stack).
+//
+// Instances are processed in alphabetical order by name. Explicitly-set ports
+// are respected and skipped. The "default" instance always gets the base port.
+func (c *Config) autoAssignPorts() {
 	names := make([]string, 0, len(c.Instances))
 	for name := range c.Instances {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	// Put "default" first so it always gets 5432
+	// Put "default" first so it always gets the lowest port
 	sorted := make([]string, 0, len(names))
 	for _, n := range names {
 		if n == "default" {
@@ -455,18 +481,49 @@ func (c *Config) autoAssignHostPorts() {
 		}
 	}
 
-	nextPort := 25432
+	// Platform-appropriate port bases
+	pgBase := 25432
+	sshBase := 0
+	if runtime.GOOS == "windows" {
+		pgBase = 5432
+		sshBase = 2222
+	}
+
+	// Probe already-used ports so multiple config files (or non-aifs
+	// services) on the same host don't collide. Only meaningful on
+	// Windows (host networking); on Unix bridge networking this is a no-op.
+	usedPorts := platform.GetUsedPorts()
+
+	nextPG := pgBase
+	nextSSH := sshBase
 	for _, name := range sorted {
 		inst := c.Instances[name]
+		changed := false
+
 		if inst.Podman.HostPort == 0 {
-			inst.Podman.HostPort = nextPort
-			nextPort++
-		} else {
-			// User set a specific port — skip past it
-			if inst.Podman.HostPort >= nextPort {
-				nextPort = inst.Podman.HostPort + 1
+			for usedPorts != nil && usedPorts[nextPG] {
+				nextPG++
 			}
+			inst.Podman.HostPort = nextPG
+			nextPG++
+			changed = true
+		} else if inst.Podman.HostPort >= nextPG {
+			nextPG = inst.Podman.HostPort + 1
 		}
-		c.Instances[name] = inst
+
+		if inst.Podman.SSHPort == 0 && sshBase > 0 {
+			for usedPorts != nil && usedPorts[nextSSH] {
+				nextSSH++
+			}
+			inst.Podman.SSHPort = nextSSH
+			nextSSH++
+			changed = true
+		} else if inst.Podman.SSHPort >= nextSSH && sshBase > 0 {
+			nextSSH = inst.Podman.SSHPort + 1
+		}
+
+		if changed {
+			c.Instances[name] = inst
+		}
 	}
 }

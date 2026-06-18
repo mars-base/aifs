@@ -1,6 +1,7 @@
 package podman
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -62,18 +64,52 @@ func (m *BackupManager) SSHConfigPath() string {
 }
 
 // WriteSSHConfig writes an SSH client config that disables host key checking
-// for PG containers inside the podman network.
+// for PG containers. On Windows (host networking), per-instance Host aliases
+// map container names to 127.0.0.1 with unique SSH ports. On Unix, a wildcard
+// Host matches all aifs-pg-* containers via bridge DNS on port 22.
 func (m *BackupManager) WriteSSHConfig() (string, error) {
-	conf := `Host aifs-pg-*
+	var conf string
+	if runtime.GOOS == "windows" {
+		// Per-instance Host aliases: each PG container name maps to
+		// 127.0.0.1 with its unique SSH port (host networking).
+		var sb strings.Builder
+		for _, inst := range m.cfg.Instances {
+			if !inst.PITR.Enabled || inst.Podman.ContainerName == "" {
+				continue
+			}
+			sshPort := inst.Podman.SSHPort
+			if sshPort == 0 {
+				sshPort = 2222
+			}
+			fmt.Fprintf(&sb, "Host %s\n", inst.Podman.ContainerName)
+			sb.WriteString("    HostName 127.0.0.1\n")
+			sb.WriteString("    StrictHostKeyChecking no\n")
+			sb.WriteString("    UserKnownHostsFile /dev/null\n")
+			sb.WriteString("    IdentityFile /root/.ssh/id_rsa\n")
+			sb.WriteString("    User postgres\n")
+			fmt.Fprintf(&sb, "    Port %d\n\n", sshPort)
+		}
+		conf = sb.String()
+	} else {
+		conf = `Host aifs-pg-*
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
     IdentityFile /root/.ssh/id_rsa
     User postgres
     Port 22
 `
+	}
 	path := m.SSHConfigPath()
-	if err := os.WriteFile(path, []byte(conf), 0644); err != nil {
-		return "", fmt.Errorf("writing ssh config: %w", err)
+
+	if runtime.GOOS == "windows" {
+		wslPath := wslNativePath(path)
+		if err := wslWriteFile(wslPath, []byte(conf), 0644); err != nil {
+			return "", fmt.Errorf("writing ssh config (wsl): %w", err)
+		}
+	} else {
+		if err := os.WriteFile(path, []byte(conf), 0644); err != nil {
+			return "", fmt.Errorf("writing ssh config: %w", err)
+		}
 	}
 	return path, nil
 }
@@ -84,7 +120,13 @@ func (m *BackupManager) EnsureSSHKey() (*SSHKeyPair, error) {
 		return nil, fmt.Errorf("creating backup ssh directory: %w", err)
 	}
 
-	if _, err := os.Stat(keys.Private); err == nil {
+	// Check if key already exists (on Windows check WSL side).
+	if runtime.GOOS == "windows" {
+		wslPriv := wslNativePath(keys.Private)
+		if _, err := exec.Command("wsl", "-d", wslDistro(), "--exec", "test", "-f", wslPriv).Output(); err == nil {
+			return &keys, nil
+		}
+	} else if _, err := os.Stat(keys.Private); err == nil {
 		return &keys, nil
 	}
 
@@ -94,23 +136,41 @@ func (m *BackupManager) EnsureSSHKey() (*SSHKeyPair, error) {
 		return nil, fmt.Errorf("generating rsa key: %w", err)
 	}
 
-	privFile, err := os.OpenFile(keys.Private, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("creating private key file: %w", err)
-	}
-	defer privFile.Close()
-
 	privPEM := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}
-	if err := pem.Encode(privFile, privPEM); err != nil {
-		return nil, fmt.Errorf("writing private key: %w", err)
+	var privBuf bytes.Buffer
+	if err := pem.Encode(&privBuf, privPEM); err != nil {
+		return nil, fmt.Errorf("encoding private key: %w", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		wslPriv := wslNativePath(keys.Private)
+		if err := wslWriteFile(wslPriv, privBuf.Bytes(), 0600); err != nil {
+			return nil, fmt.Errorf("writing private key (wsl): %w", err)
+		}
+	} else {
+		privFile, err := os.OpenFile(keys.Private, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return nil, fmt.Errorf("creating private key file: %w", err)
+		}
+		defer privFile.Close()
+		if err := pem.Encode(privFile, privPEM); err != nil {
+			return nil, fmt.Errorf("writing private key: %w", err)
+		}
 	}
 
 	pub, err := sshPublicKey(&priv.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("formatting public key: %w", err)
 	}
-	if err := os.WriteFile(keys.Public, []byte(pub), 0644); err != nil {
-		return nil, fmt.Errorf("writing public key: %w", err)
+	if runtime.GOOS == "windows" {
+		wslPub := wslNativePath(keys.Public)
+		if err := wslWriteFile(wslPub, []byte(pub), 0644); err != nil {
+			return nil, fmt.Errorf("writing public key (wsl): %w", err)
+		}
+	} else {
+		if err := os.WriteFile(keys.Public, []byte(pub), 0644); err != nil {
+			return nil, fmt.Errorf("writing public key: %w", err)
+		}
 	}
 
 	fmt.Println("  ✓ SSH key pair generated")
@@ -129,7 +189,14 @@ func sshPublicKey(pub *rsa.PublicKey) (string, error) {
 // AuthorizeKeyOnContainer installs the backup public key into a PG container.
 func (m *BackupManager) AuthorizeKeyOnContainer(containerName string) error {
 	keys := m.SSHKeyPaths()
-	pub, err := os.ReadFile(keys.Public)
+
+	var pub []byte
+	var err error
+	if runtime.GOOS == "windows" {
+		pub, err = wslReadFile(wslNativePath(keys.Public))
+	} else {
+		pub, err = os.ReadFile(keys.Public)
+	}
 	if err != nil {
 		return fmt.Errorf("reading public key: %w", err)
 	}
@@ -202,6 +269,9 @@ func (m *BackupManager) buildBackupImage(tag string) error {
 
 // EnsureNetwork creates the shared podman network if it doesn't exist.
 func (m *BackupManager) EnsureNetwork() error {
+	if runtime.GOOS == "windows" {
+		return nil // host networking, no bridge needed
+	}
 	netName := m.cfg.Podman.Network
 	exists, err := m.networkExists(netName)
 	if err != nil {
@@ -242,10 +312,18 @@ func (m *BackupManager) EnsureBackupDirs() error {
 		if dir == "" {
 			continue
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("creating backup directory %s: %w", dir, err)
+		if runtime.GOOS == "windows" {
+			wslPath := hostMountPath(dir)
+			if err := wslMkdirAll(wslPath); err != nil {
+				return fmt.Errorf("creating backup directory %s (wsl): %w", dir, err)
+			}
+			fmt.Printf("→ Backup directory ensured (WSL): %s\n", wslPath)
+		} else {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("creating backup directory %s: %w", dir, err)
+			}
+			fmt.Printf("→ Backup directory ensured: %s\n", dir)
 		}
-		fmt.Printf("→ Backup directory ensured: %s\n", dir)
 	}
 	return nil
 }
@@ -275,7 +353,11 @@ func (m *BackupManager) EnsureBackupInfra() error {
 
 // collectPGContainerIPs returns the current IP addresses of all PITR-enabled
 // PG containers. Containers that do not exist are skipped.
+// On Windows with host networking, returns empty map (no --add-host needed).
 func (m *BackupManager) collectPGContainerIPs() (map[string]string, error) {
+	if runtime.GOOS == "windows" {
+		return nil, nil // host networking: pg1-host=127.0.0.1, no --add-host
+	}
 	hostEntries := make(map[string]string)
 	for _, inst := range m.cfg.Instances {
 		if !inst.PITR.Enabled || inst.Podman.ContainerName == "" {
@@ -316,10 +398,13 @@ func (m *BackupManager) WritePgbackrestConf() (string, error) {
 		// pgbackrest runs from the backup container and connects to each PG
 		// container via SSH (pg1-host). The PG container runs sshd as root
 		// and accepts the backup container's public key for the postgres user.
+		// On Windows: SSH Host alias (in ssh_config) resolves container name
+		// to 127.0.0.1 with the correct per-instance SSH port.
+		host := inst.Podman.ContainerName
 		sb.WriteString("[")
 		sb.WriteString(stanza)
 		sb.WriteString("]\n")
-		fmt.Fprintf(&sb, "pg1-host=%s\n", inst.Podman.ContainerName)
+		fmt.Fprintf(&sb, "pg1-host=%s\n", host)
 		fmt.Fprintf(&sb, "pg1-path=/var/lib/postgresql/data\n")
 		fmt.Fprintf(&sb, "pg1-user=postgres\n\n")
 	}
@@ -333,8 +418,15 @@ func (m *BackupManager) WritePgbackrestConf() (string, error) {
 	sb.WriteString("compress-type=zst\n")
 
 	confPath := filepath.Join(m.dataDir, "pgbackrest.conf")
-	if err := os.WriteFile(confPath, []byte(sb.String()), 0644); err != nil {
-		return "", fmt.Errorf("writing pgbackrest.conf: %w", err)
+	if runtime.GOOS == "windows" {
+		wslPath := wslNativePath(confPath)
+		if err := wslWriteFile(wslPath, []byte(sb.String()), 0644); err != nil {
+			return "", fmt.Errorf("writing pgbackrest.conf (wsl): %w", err)
+		}
+	} else {
+		if err := os.WriteFile(confPath, []byte(sb.String()), 0644); err != nil {
+			return "", fmt.Errorf("writing pgbackrest.conf: %w", err)
+		}
 	}
 
 	fmt.Printf("→ pgbackrest.conf generated: %s (%d stanzas)\n", confPath, len(m.cfg.Instances))
@@ -355,6 +447,17 @@ func (m *BackupManager) EnsureBackupContainer(confPath string, hostEntries map[s
 	}
 
 	if exists {
+		// On Windows (host networking), always recreate the backup container
+		// to pick up SSH config changes (per-instance ports). The container
+		// is sleep-infinity, so recreation is cheap.
+		if runtime.GOOS == "windows" {
+			fmt.Println("→ Recreating backup container to refresh SSH config...")
+			if _, err := m.run("rm", "-f", containerName); err != nil {
+				return fmt.Errorf("removing backup container: %w", err)
+			}
+			return m.createBackupContainer(confPath, hostEntries)
+		}
+
 		// Check whether the existing container has the required --add-host entries.
 		// PG container IPs can change after stop/start, so recreate if stale.
 		stale, err := m.hostEntriesStale(hostEntries)
@@ -549,13 +652,18 @@ func (m *BackupManager) createBackupContainer(confPath string, hostEntries map[s
 	args := []string{
 		"run", "-d",
 		"--name", m.cfg.Backup.ContainerName,
-		"--network", m.cfg.Podman.Network,
 	}
 
-	// Add /etc/hosts entries for PG containers so pgbackrest can resolve pg1-host.
-	// Required when the rootless podman network backend does not provide DNS.
-	for hostname, ip := range hostEntries {
-		args = append(args, "--add-host", fmt.Sprintf("%s:%s", hostname, ip))
+	if runtime.GOOS == "windows" {
+		// WSL2: host networking — no bridge, no --add-host needed.
+		args = append(args, "--network", "host")
+	} else {
+		args = append(args, "--network", m.cfg.Podman.Network)
+		// Add /etc/hosts entries for PG containers so pgbackrest can resolve pg1-host.
+		// Required when the rootless podman network backend does not provide DNS.
+		for hostname, ip := range hostEntries {
+			args = append(args, "--add-host", fmt.Sprintf("%s:%s", hostname, ip))
+		}
 	}
 
 	args = append(args,

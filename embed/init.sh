@@ -26,9 +26,9 @@ cat >> "$PGDATA/postgresql.conf" << EOF
 # === aifs PITR configuration ===
 wal_level = replica
 archive_mode = on
-# Run pgbackrest as root via sudo so the backup repo (shared with the backup
-# container) is accessed by the same host-mapped UID in rootless podman.
-archive_command = 'sudo -n -u root pgbackrest --stanza=${STANZA} archive-push %p'
+# archive_command is set after stanza creation via ALTER SYSTEM by aifs start.
+# Do NOT set it here — the stanza does not exist yet during first-time initdb,
+# and the archiver would accumulate failures for every WAL segment.
 archive_timeout = 60
 max_wal_senders = 10
 EOF

@@ -58,6 +58,15 @@ func loadConfig() error {
 	return nil
 }
 
+// saveConfig persists the current configuration to disk.
+func saveConfig() error {
+	path := cfgPath
+	if path == "" {
+		path = platform.DefaultConfigPath()
+	}
+	return cfg.Save(path)
+}
+
 // newPodman creates a Podman manager.
 func newPodman() (*podman.Manager, error) {
 	return podman.New(cfg)

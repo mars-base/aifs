@@ -24,8 +24,13 @@ if [[ -f /run/aifs/backup_id_rsa.pub ]]; then
     chmod 600 /etc/ssh/authorized_keys/postgres
 fi
 
-# Start sshd in background
-/usr/sbin/sshd
+# Start sshd in background. On Windows (host networking) each PG instance
+# gets a unique AIFS_SSH_PORT to avoid port collisions.
+SSHD_OPTS=""
+if [ -n "${AIFS_SSH_PORT:-}" ]; then
+    SSHD_OPTS="-p ${AIFS_SSH_PORT}"
+fi
+/usr/sbin/sshd $SSHD_OPTS
 
 # Hand off to the official postgres entrypoint
 exec docker-entrypoint.sh "$@"

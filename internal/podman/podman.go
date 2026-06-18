@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -148,9 +149,14 @@ func (m *Manager) buildImage(tag string) error {
 // ─── Network management ──────────────────────────────────────────
 
 // EnsureNetwork creates the shared podman network if it doesn't exist.
+// On Windows (WSL2) this is a no-op — containers use --network host because
+// WSL2's kernel lacks nftables for netavark bridge networking.
 // All aifs containers (PG + backup) communicate via this bridge network,
 // using container names as DNS hostnames.
 func (m *Manager) EnsureNetwork() error {
+	if runtime.GOOS == "windows" {
+		return nil // host networking, no bridge needed
+	}
 	netName := m.cfg.Podman.Network
 	exists, err := m.networkExists(netName)
 	if err != nil {
@@ -189,18 +195,31 @@ func (m *Manager) EnsureDirs() error {
 		if dir == "" {
 			continue
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("creating backup directory %s: %w", dir, err)
+		if runtime.GOOS == "windows" {
+			if err := wslMkdirAll(hostMountPath(dir)); err != nil {
+				return fmt.Errorf("creating backup directory %s (wsl): %w", dir, err)
+			}
+		} else {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("creating backup directory %s: %w", dir, err)
+			}
 		}
 	}
 	for _, dir := range dirs {
 		if dir == "" {
 			continue
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("creating data directory %s: %w", dir, err)
+		if runtime.GOOS == "windows" {
+			if err := wslMkdirAll(hostMountPath(dir)); err != nil {
+				return fmt.Errorf("creating data directory %s (wsl): %w", dir, err)
+			}
+			fmt.Printf("→ Data directory ensured (WSL): %s\n", hostMountPath(dir))
+		} else {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("creating data directory %s: %w", dir, err)
+			}
+			fmt.Printf("→ Data directory ensured: %s\n", dir)
 		}
-		fmt.Printf("→ Data directory ensured: %s\n", dir)
 	}
 
 	return nil
@@ -389,6 +408,11 @@ func removeHostDir(podmanPath, dir string) error {
 // host-mapped port. This works on all platforms, including Windows where the
 // host pg_isready binary may not be available.
 func (m *Manager) PGIsReady() (bool, error) {
+	if runtime.GOOS == "windows" {
+		// In host network mode on WSL2, PG listens on the WSL VM's port 5432,
+		// not on the configured HostPort. Query pg_isready inside the container.
+		return m.pgIsReadyWSL()
+	}
 	addr := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", m.cfg.Podman.HostPort))
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
@@ -396,6 +420,16 @@ func (m *Manager) PGIsReady() (bool, error) {
 	}
 	_ = conn.Close()
 	return true, nil
+}
+
+// pgIsReadyWSL checks PG readiness via podman exec inside WSL.
+func (m *Manager) pgIsReadyWSL() (bool, error) {
+	args := []string{"exec", m.cfg.Podman.ContainerName, "pg_isready", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database}
+	out, err := m.run(args...)
+	if err != nil {
+		return false, nil
+	}
+	return strings.Contains(out, "accepting connections"), nil
 }
 
 // ContainerIP returns the IP address of the managed container on the configured network.
@@ -514,8 +548,24 @@ func (m *Manager) createContainer() error {
 	args := []string{
 		"run", "-d",
 		"--name", m.cfg.Podman.ContainerName,
-		"--network", m.cfg.Podman.Network,
-		"-p", fmt.Sprintf("%d:5432", hostPort),
+	}
+
+	if runtime.GOOS == "windows" {
+		// WSL2: use host networking — netavark bridge fails on kernel 5.10 (no nftables).
+		// Each PG instance gets a unique port via PGPORT / AIFS_SSH_PORT env vars.
+		args = append(args, "--network", "host")
+		args = append(args,
+			"-e", fmt.Sprintf("PGPORT=%d", m.cfg.Podman.HostPort),
+			"-e", fmt.Sprintf("AIFS_SSH_PORT=%d", m.cfg.Podman.SSHPort),
+		)
+	} else {
+		args = append(args,
+			"--network", m.cfg.Podman.Network,
+			"-p", fmt.Sprintf("%d:5432", hostPort),
+		)
+	}
+
+	args = append(args,
 		"-v", fmt.Sprintf("%s:/var/lib/postgresql", hostMountPath(m.cfg.Podman.DataDir)),
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(backupVol)),
 		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
@@ -524,7 +574,7 @@ func (m *Manager) createContainer() error {
 		"-e", fmt.Sprintf("POSTGRES_PASSWORD=%s", m.cfg.Postgres.Password),
 		"-e", fmt.Sprintf("PGBACKREST_STANZA=%s", m.cfg.PITR.PgBackRestStanza),
 		"-e", "PGDATA=/var/lib/postgresql/data",
-	}
+	)
 
 	// Mount the backup container's public key so the PG container entrypoint
 	// can install it as authorized_keys for postgres on every startup. This
@@ -555,7 +605,24 @@ func (m *Manager) createContainer() error {
 // Returns the path to the config file to be mounted.
 func (m *Manager) writeInstancePgbackrestConf() (string, error) {
 	stanza := m.cfg.PITR.PgBackRestStanza
-	content := fmt.Sprintf(`[%s]
+	var content string
+	if runtime.GOOS == "windows" {
+		// On Windows (host networking), each PG instance may listen on a
+		// non-default port. Without pg1-port, the remote pgbackrest process
+		// (over SSH) defaults to 5432 — but sshd does not forward the PGPORT
+		// env var, so instances with custom ports fail stanza-create.
+		content = fmt.Sprintf(`[%s]
+pg1-path=/var/lib/postgresql/data
+pg1-user=%s
+pg1-port=%d
+
+[global]
+repo1-path=/var/lib/pgbackrest
+repo1-retention-full=%d
+log-level-console=info
+`, stanza, m.cfg.Postgres.User, m.cfg.Podman.HostPort, m.cfg.Backup.RetentionFull)
+	} else {
+		content = fmt.Sprintf(`[%s]
 pg1-path=/var/lib/postgresql/data
 pg1-user=%s
 
@@ -564,10 +631,20 @@ repo1-path=/var/lib/pgbackrest
 repo1-retention-full=%d
 log-level-console=info
 `, stanza, m.cfg.Postgres.User, m.cfg.Backup.RetentionFull)
+	}
 
 	confPath := filepath.Join(m.dataDir, fmt.Sprintf("pgbackrest-%s.conf", m.cfg.Podman.ContainerName))
-	if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
-		return "", fmt.Errorf("writing %s: %w", confPath, err)
+
+	if runtime.GOOS == "windows" {
+		// Write to WSL ext4 so the container can read it via -v mount.
+		wslPath := wslNativePath(confPath)
+		if err := wslWriteFile(wslPath, []byte(content), 0644); err != nil {
+			return "", fmt.Errorf("writing %s (wsl): %w", confPath, err)
+		}
+	} else {
+		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
+			return "", fmt.Errorf("writing %s: %w", confPath, err)
+		}
 	}
 	return confPath, nil
 }

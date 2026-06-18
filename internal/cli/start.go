@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -116,6 +117,41 @@ Steps:
 			if err := pt.CheckStanza(); err != nil {
 				fmt.Printf("  ⚠ stanza check warning: %v\n", err)
 			}
+
+			// init.sh set archive_mode=on but did NOT set archive_command during
+			// first-time initdb because the stanza doesn't exist yet.  Set it
+			// now via ALTER SYSTEM and wait for the archiver to process any
+			// pending WAL segments before the first backup can succeed.
+			stanza := cfg.PITR.PgBackRestStanza
+			archiveCmd := fmt.Sprintf("sudo -n -u root pgbackrest --stanza=%s archive-push %%p", stanza)
+			setSQL := fmt.Sprintf("ALTER SYSTEM SET archive_command TO '%s'", archiveCmd)
+
+			if _, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", setSQL); err != nil {
+				fmt.Printf("  ⚠ setting archive_command: %v\n", err)
+			} else {
+				fmt.Println("→ archive_command configured")
+			}
+
+			// Reload to make the archiver pick up the new command, then
+			// switch WAL to give it a fresh segment.
+			pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_reload_conf()")
+			pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_switch_wal()")
+
+			fmt.Println("→ Waiting for WAL archiver to catch up...")
+			for i := 0; i < 30; i++ {
+				time.Sleep(2 * time.Second)
+				out, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-t", "-c",
+					"SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') AS f WHERE f LIKE '%.ready'")
+				if err == nil && strings.TrimSpace(out) == "0" {
+					fmt.Println("  ✓ WAL archiver caught up")
+					break
+				}
+			}
+		}
+
+		// Persist auto-assigned ports so subsequent starts don't re-allocate.
+		if err := saveConfig(); err != nil {
+			fmt.Printf("  ⚠ failed to save config: %v\n", err)
 		}
 
 		fmt.Println("\n✓ started")
