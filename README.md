@@ -204,6 +204,31 @@ aifs snapshot create --type full
 aifs snapshot create --type diff
 ```
 
+## Destroying an instance
+
+When you no longer need an instance, `aifs destroy` removes it:
+
+```bash
+# Keep local data (default) — preserves PostgreSQL data on disk
+aifs destroy -i your-project
+
+# Skip the confirmation prompt
+aifs destroy -i your-project --force
+```
+
+By default, `destroy` stops the container and removes the config entry but **preserves** host data directories. If you need to permanently delete everything:
+
+```bash
+# Also delete data directory, WAL archives, and backup stanza
+aifs destroy -i your-project --clean-data --force
+```
+
+| Flag | Effect |
+|------|--------|
+| *(none)* | Stop container + remove config entry, **keep** local data |
+| `--clean-data` | Also delete `dbdata/`, WAL archives, and backup repository |
+| `--force` | Skip confirmation prompt |
+
 ## Build from source
 
 ```bash
