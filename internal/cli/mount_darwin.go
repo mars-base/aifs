@@ -1,15 +1,16 @@
-//go:build !windows
+//go:build darwin
 
 package cli
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func mountInBackground(mountPoint string) error {
@@ -40,7 +41,7 @@ func mountInBackground(mountPoint string) error {
 		return fmt.Errorf("starting background mount: %w", err)
 	}
 
-	// Wait for the mount to become visible in /proc/self/mounts.
+	// Wait for the mount to become visible in the macOS mount table.
 	for i := 0; i < 30; i++ {
 		time.Sleep(200 * time.Millisecond)
 		if mountVisible(mountPoint) {
@@ -64,26 +65,26 @@ func mountInBackground(mountPoint string) error {
 
 // mountVisible reports whether mountPoint is currently mounted as an aifs FUSE filesystem.
 func mountVisible(mountPoint string) bool {
-	f, err := os.Open("/proc/self/mounts")
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-
 	mp, err := filepath.Abs(mountPoint)
 	if err != nil {
 		mp = mountPoint
 	}
 
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		fields := strings.Fields(s.Text())
-		if len(fields) < 4 {
-			continue
-		}
-		if fields[0] == "aifs" && strings.HasPrefix(fields[2], "fuse") {
-			m, _ := filepath.Abs(fields[1])
-			if m == mp {
+	n, err := unix.Getfsstat(nil, unix.MNT_NOWAIT)
+	if err != nil || n <= 0 {
+		return false
+	}
+	buf := make([]unix.Statfs_t, n)
+	n, err = unix.Getfsstat(buf, unix.MNT_NOWAIT)
+	if err != nil {
+		return false
+	}
+	for i := range n {
+		source := unix.ByteSliceToString(buf[i].Mntfromname[:])
+		fstype := strings.ToLower(unix.ByteSliceToString(buf[i].Fstypename[:]))
+		if source == "aifs" && strings.Contains(fstype, "fuse") {
+			mntPt := unix.ByteSliceToString(buf[i].Mntonname[:])
+			if mntPt == mp {
 				return true
 			}
 		}

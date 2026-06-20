@@ -58,7 +58,7 @@ type SetAttrMask struct {
 
 // MetadataStore is the metadata backend for a PG filesystem.
 type MetadataStore interface {
-	Init(ctx context.Context, volName string, force bool) (*FormatInfo, error)
+	Init(ctx context.Context, volName string, uid, gid uint32, force bool) (*FormatInfo, error)
 	Load(ctx context.Context) (*FormatInfo, error)
 
 	Lookup(ctx context.Context, parent uint64, name string) (*Attr, error)
@@ -112,7 +112,7 @@ func NewDB(db *sql.DB, blob object.BlobStore, schema *Schema) *DB {
 }
 
 // Init creates tables and initializes the root inode.
-func (m *DB) Init(ctx context.Context, volName string, force bool) (*FormatInfo, error) {
+func (m *DB) Init(ctx context.Context, volName string, uid, gid uint32, force bool) (*FormatInfo, error) {
 	if err := m.schema.CreateTables(ctx, m.db); err != nil {
 		return nil, err
 	}
@@ -158,9 +158,9 @@ func (m *DB) Init(ctx context.Context, volName string, force bool) (*FormatInfo,
 	}
 	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`INSERT INTO %s (ino, kind, mode, uid, gid, size, nlink, atime, mtime, ctime)
-		VALUES (1, $1, $2, 0, 0, 0, 2, $3, $3, $3)
+		VALUES (1, $1, $2, $3, $4, 0, 2, $5, $5, $5)
 		ON CONFLICT (ino) DO UPDATE SET kind = EXCLUDED.kind, mode = EXCLUDED.mode`, m.schema.Inode),
-		KindDir, uint32(0755)|syscall.S_IFDIR, now); err != nil {
+		KindDir, uint32(0755)|syscall.S_IFDIR, uid, gid, now); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

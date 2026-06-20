@@ -3,6 +3,7 @@ package pgfs
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/mars-base/aifs/internal/pgfs/meta"
 )
@@ -15,7 +16,7 @@ func Format(ctx context.Context, pgURL, volumeName, tablePrefix string, force bo
 	}
 	defer db.Close()
 
-	info, err := m.Init(ctx, volumeName, force)
+	info, err := m.Init(ctx, volumeName, uint32(os.Getuid()), uint32(os.Getgid()), force)
 	if err != nil {
 		return nil, fmt.Errorf("format failed: %w", err)
 	}
