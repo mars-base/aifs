@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build darwin
 
 package pgfs
 
@@ -61,17 +61,11 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string)
 	return nil
 }
 
-// Umount unmounts a FUSE mount point.
+// Umount unmounts a FUSE mount point using the system umount command.
+// macFUSE does not provide fusermount3/fusermount; macOS uses the
+// standard umount(8) utility instead.
 func Umount(mountPoint string) error {
-	bin, err := exec.LookPath("fusermount3")
-	if err != nil {
-		bin, err = exec.LookPath("fusermount")
-		if err != nil {
-			return fmt.Errorf("fusermount not found")
-		}
-	}
-
-	cmd := exec.Command(bin, "-u", mountPoint)
+	cmd := exec.Command("umount", mountPoint)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

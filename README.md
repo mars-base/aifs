@@ -15,10 +15,6 @@ AI agents are powerful but unpredictable: they can delete files, corrupt data, o
 
 ## Prerequisites
 
-| Dependency | Purpose | Install |
-|------------|---------|---------|
-| Podman | Container runtime | [podman.io](https://podman.io) |
-
 - **Linux**: podman runs natively, no VM required. On Debian/Ubuntu, enable unprivileged user namespaces for rootless containers:
   ```bash
   sudo sysctl kernel.unprivileged_userns_clone=1
@@ -61,43 +57,93 @@ irm https://github.com/mars-base/aifs/releases/latest/download/install.ps1 | iex
 
 ## Quick Start
 
+### Linux / macOS
+
 ```bash
-# 1. Initialize config (with a default instance)
-aifs config init --add default
+# 1. Initialize config (add your project instance)
+aifs config init --add your-project
 
-# 2. Start PostgreSQL + pgBackRest backup container
-aifs start -i default
+# 2. Start PostgreSQL and backup container
+aifs start -i your-project
 
-# 3. Check status
-aifs status -i default
+# 3. Format the filesystem (one-time setup)
+aifs format -i your-project --volume your-project
 
-# 4. Create a snapshot before letting the agent loose
-aifs snapshot create --type full --comment "before-agent-run"
+# 4. Mount the filesystem
+mkdir -p ~/mnt
+aifs mount -i your-project ~/mnt -d        # -d runs mount in background
 
-# 5. Agent does its work...
+# 5. Use it like a normal filesystem
+echo "hello aifs" > ~/mnt/hello.txt
+mkdir ~/mnt/projects
+cat ~/mnt/hello.txt                         # → hello aifs
 
-# 6. If something goes wrong, rewind (accepts multiple timezone formats)
-aifs restore -i default --time "2026-06-15 14:30:00+00"
+# 6. Create a snapshot before risky work
+aifs snapshot create --type full
 
-# 7. Everything is back — nothing lost
+# 7. Agent does its work... (read, write, delete, experiment freely)
+
+# 8. If something goes wrong, rewind first, then remount
+aifs umount ~/mnt
+aifs restore -i your-project --time "2026-06-15 14:30:00+00"
+aifs mount -i your-project ~/mnt -d
+
+# 9. Everything is back — nothing lost
+cat ~/mnt/hello.txt                         # still there
 ```
+
+### Windows
+
+```powershell
+# 1. Initialize config (add your project instance)
+aifs config init --add your-project
+
+# 2. Start PostgreSQL and backup container
+aifs start -i your-project
+
+# 3. Format the filesystem (one-time setup)
+aifs format -i your-project --volume your-project
+
+# 4. Mount as a drive letter (Z: is recommended)
+aifs mount -i your-project Z: -d
+
+# 5. Use it like a normal drive
+echo hello aifs > Z:\hello.txt
+mkdir Z:\projects
+type Z:\hello.txt                           # → hello aifs
+
+# 6. Create a snapshot before risky work
+aifs snapshot create --type full
+
+# 7. Agent does its work...
+
+# 8. If something goes wrong, rewind first, then remount
+aifs umount Z:
+aifs restore -i your-project --time "2026-06-15 14:30:00+00"
+aifs mount -i your-project Z: -d
+
+# 9. Everything is back
+type Z:\hello.txt                           # still there
+```
+
+> **Tip**: On Windows, use a drive letter (Z:, X:, etc.) for session-independent access. Directory mounts require an interactive logged-on console session.
 
 ## Restore time formats
 
 `aifs restore --time` accepts the following timezone-aware formats:
 
 ```bash
-aifs restore -i default --time "2026-06-15 14:30:00+00:00"
-aifs restore -i default --time "2026-06-15 14:30:00+0000"
-aifs restore -i default --time "2026-06-15 14:30:00+00"
-aifs restore -i default --time "2026-06-15 22:30:00+08"
+aifs restore -i your-project --time "2026-06-15 14:30:00+00:00"
+aifs restore -i your-project --time "2026-06-15 14:30:00+0000"
+aifs restore -i your-project --time "2026-06-15 14:30:00+00"
+aifs restore -i your-project --time "2026-06-15 22:30:00+08"
 ```
 
 You can also omit the timezone offset, in which case the time is interpreted
 as **UTC**:
 
 ```bash
-aifs restore -i default --time "2026-06-15 14:30:00"
+aifs restore -i your-project --time "2026-06-15 14:30:00"
 ```
 
 The provided time is normalized to the same absolute point in time before being
@@ -121,47 +167,12 @@ aifs snapshot create --type full
 aifs snapshot create --type diff
 ```
 
-## Config file
-
-```yaml
-# ~/.aifs/config.yaml
-base_dir: ""
-network: "aifs-net"
-
-backup:
-  container_name: "aifs-backup"
-  image_tag: "ghcr.io/mars-base/aifs/aifs-backup:2.58.0"
-  data_dir: "~/.aifs/backup/data"
-  log_dir: "~/.aifs/backup/log"
-  retention_full: 7
-
-logging:
-  level: "info"
-
-instances:
-  default:
-    postgres:
-      host: "localhost"
-      port: 5432
-      user: "aifs"
-      password: "<random>"
-      database: "default_db"
-    podman:
-      container_name: "aifs-pg-default"
-      data_dir: "~/.aifs/dbdata/default/data"
-      image_tag: "ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0"
-      host_port: 25432
-    pitr:
-      enabled: true
-      pgbackrest_stanza: "aifs_default"
-```
-
 ## Build from source
 
 ```bash
 git clone https://github.com/mars-base/aifs.git
 cd aifs
-go build -o aifs ./cmd/aifs/
+make build
 ```
 
 ## License
