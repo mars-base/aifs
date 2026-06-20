@@ -450,9 +450,10 @@ func (m *Manager) ContainerIP() (string, error) {
 // (which has no pg1-host, so restore runs locally on the data directory).
 // If tailLogs is true, the container's stdout/stderr is also streamed to os stdout/stderr.
 //
-// The temporary container is given a fixed --name so it can be reliably cleaned
-// up even if the podman CLI process is killed (e.g. by a signal or timeout).
-// A deferred "podman rm -f" acts as a safety net beyond the --rm flag.
+// The temporary container is given a deterministic --name with a PID suffix
+// so concurrent aifs processes (e.g. parallel e2e tests) won't collide, while
+// still allowing cleanup of orphaned containers from prior runs via prefix
+// matching. A deferred "podman rm -f" acts as a safety net beyond the --rm flag.
 // No timeout is enforced — restore duration depends on database size and may
 // take hours for large datasets.
 func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (string, error) {
@@ -461,10 +462,23 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 		return "", fmt.Errorf("generating pgbackrest.conf: %w", err)
 	}
 
-	restoreName := "aifs-restore-" + m.cfg.Podman.ContainerName
+	// Unique-per-run container name: PID suffix prevents collisions between
+	// concurrent runs (e.g. parallel e2e tests sharing the same instance name).
+	restoreName := fmt.Sprintf("aifs-restore-%s-%d", m.cfg.Podman.ContainerName, os.Getpid())
 
-	// Clean up any orphaned restore container from a previous failed run.
-	m.run("rm", "-f", restoreName)
+	// Clean up any orphaned restore containers from previous runs (any PID).
+	// We use the name prefix to match containers that belong to this instance
+	// but were left behind by a killed/crashed process.
+	orphanPrefix := "aifs-restore-" + m.cfg.Podman.ContainerName + "-"
+	rmOrphans := exec.Command(m.podman, "ps", "-a", "--filter", "name="+orphanPrefix, "-q")
+	if out, err := rmOrphans.Output(); err == nil {
+		for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			id = strings.TrimSpace(id)
+			if id != "" && id != restoreName {
+				m.run("rm", "-f", id)
+			}
+		}
+	}
 
 	// Ensure cleanup on all exit paths (belt-and-suspenders with --rm).
 	defer func() {
