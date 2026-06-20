@@ -4,6 +4,7 @@ package podman
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -448,14 +449,31 @@ func (m *Manager) ContainerIP() (string, error) {
 // same data directory and backup repo, using the per-instance pgbackrest.conf
 // (which has no pg1-host, so restore runs locally on the data directory).
 // If tailLogs is true, the container's stdout/stderr is also streamed to os stdout/stderr.
+//
+// The temporary container is given a fixed --name so it can be reliably cleaned
+// up even if the podman CLI process is killed (e.g. by a signal or timeout).
+// A deferred "podman rm -f" acts as a safety net beyond the --rm flag.
+// No timeout is enforced — restore duration depends on database size and may
+// take hours for large datasets.
 func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (string, error) {
 	confPath, err := m.writeInstancePgbackrestConf()
 	if err != nil {
 		return "", fmt.Errorf("generating pgbackrest.conf: %w", err)
 	}
 
+	restoreName := "aifs-restore-" + m.cfg.Podman.ContainerName
+
+	// Clean up any orphaned restore container from a previous failed run.
+	m.run("rm", "-f", restoreName)
+
+	// Ensure cleanup on all exit paths (belt-and-suspenders with --rm).
+	defer func() {
+		m.run("rm", "-f", restoreName)
+	}()
+
 	args := []string{
 		"run", "--rm",
+		"--name", restoreName,
 		"--network", "host",
 		"-v", fmt.Sprintf("%s:/var/lib/postgresql", hostMountPath(m.cfg.Podman.DataDir)),
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(m.cfg.Backup.DataDir)),
@@ -467,10 +485,41 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 		"--log-level-console=info",
 	}
 
+	// Run without timeout — restore can take a long time for large databases.
+	slog.Debug("podman", "args", args)
+	cmd := exec.Command(m.podman, args...)
+
+	var stdoutBuf, stderrBuf strings.Builder
 	if tailLogs {
-		return execWithTimeoutStreaming(m.podman, args, 10*time.Minute)
+		cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	} else {
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
 	}
-	return execWithTimeout(m.podman, args, 10*time.Minute)
+
+	err = cmd.Run()
+	out := stdoutBuf.String()
+
+	// Podman may report a non-zero exit after `podman run --rm` because it
+	// tries to forward a terminal signal (e.g. SIGWINCH) to a container
+	// that has already been removed. If the actual command succeeded,
+	// treat this as success.
+	if err != nil && isPodmanCleanupNoise(stderrBuf.String()) && strings.Contains(out, "completed successfully") {
+		return out, nil
+	}
+
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			errMsg := stderrBuf.String()
+			if errMsg == "" {
+				errMsg = out
+			}
+			return "", fmt.Errorf("podman %s: %s", strings.Join(args, " "), errMsg)
+		}
+		return "", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
+	}
+	return out, nil
 }
 
 // ─── Internal methods ─────────────────────────────────────────────
