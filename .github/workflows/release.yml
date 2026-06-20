@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build all binaries
+        env:
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          BUILD_TIME="$(date -u '+%Y-%m-%d_%H:%M:%S')"
+          LDFLAGS="-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
+
+          targets=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "windows/amd64"
+          )
+
+          for target in "${targets[@]}"; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            EXT=""
+            [ "$GOOS" = "windows" ] && EXT=".exe"
+            BINARY="aifs-${GOOS}-${GOARCH}${EXT}"
+            echo "→ Building ${BINARY}..."
+            GOOS="${GOOS}" GOARCH="${GOARCH}" \
+              go build -ldflags "${LDFLAGS}" -o "${BINARY}" ./cmd/aifs
+          done
+
+          echo "→ Build complete. Artifacts:"
+          ls -lh aifs-*
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aifs-linux-amd64
+            aifs-linux-arm64
+            aifs-darwin-amd64
+            aifs-darwin-arm64
+            aifs-windows-amd64.exe
+          generate_release_notes: true
