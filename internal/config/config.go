@@ -87,7 +87,7 @@ func Default() *Config {
 	return &Config{
 		BaseDir: "", // empty means use platform default
 		Postgres: PostgresConfig{
-			Host:     "localhost",
+			Host:     "127.0.0.1",
 			Port:     5432,
 			User:     "aifs",
 			Password: "aifs",
