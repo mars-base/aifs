@@ -1,4 +1,4 @@
-// // Package platform provides cross-platform adaptation: OS detection, dependency checks, default paths.
+// Package platform provides cross-platform adaptation: OS detection, dependency checks, default paths.
 package platform
 
 import (
@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 // OS represents the operating system type.
@@ -110,13 +111,100 @@ func CheckPodmanMachine() DepStatus {
 	}
 }
 
+// CheckFUSE checks whether the FUSE runtime dependency is available.
+//
+//	macOS:   checks for the macFUSE kernel extension or filesystem bundle
+//	Linux:   checks for fusermount3 or fusermount in PATH
+//	Windows: checks for WinFsp DLL
+func CheckFUSE() DepStatus {
+	switch Detect() {
+	case MacOS:
+		return checkMacFUSE()
+	case Linux:
+		return checkFusermount()
+	case Windows:
+		return checkWinFsp()
+	default:
+		return DepStatus{Name: "fuse", Found: true} // not applicable
+	}
+}
+
+func checkMacFUSE() DepStatus {
+	// Prefer checking the kext — if loaded, everything works.
+	if out, err := runCmd("kextstat"); err == nil {
+		if strings.Contains(out, "macfuse") {
+			return DepStatus{Name: "macfuse", Found: true}
+		}
+	}
+	// Fallback: check if the filesystem bundle is installed (but maybe not loaded).
+	if st, err := os.Stat("/Library/Filesystems/macfuse.fs"); err == nil && st.IsDir() {
+		return DepStatus{
+			Name:  "macfuse",
+			Found: false,
+			Hint:  "macFUSE is installed but the kernel extension is not loaded. Run: sudo kextutil /Library/Filesystems/macfuse.fs (may require reboot after approving in System Settings → Privacy & Security)",
+		}
+	}
+	return DepStatus{
+		Name:  "macfuse",
+		Found: false,
+		Hint:  "Install macFUSE: brew install --cask macfuse, then approve in System Settings → Privacy & Security and reboot",
+	}
+}
+
+func checkWinFsp() DepStatus {
+	// WinFsp installs its DLLs in Program Files.
+	winFspPaths := []string{
+		`C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll`,
+		`C:\Program Files\WinFsp\bin\winfsp-x64.dll`,
+	}
+	for _, p := range winFspPaths {
+		if _, err := os.Stat(p); err == nil {
+			return DepStatus{Name: "winfsp", Found: true}
+		}
+	}
+	return DepStatus{
+		Name:  "winfsp",
+		Found: false,
+		Hint:  "Install WinFsp: winget install WinFsp.WinFsp (or download from https://winfsp.dev/)",
+	}
+}
+
+func checkFusermount() DepStatus {
+	path, err := exec.LookPath("fusermount3")
+	if err != nil {
+		path, err = exec.LookPath("fusermount")
+		if err != nil {
+			return DepStatus{
+				Name:  "fusermount3",
+				Found: false,
+				Hint:  fuseInstallHint(),
+			}
+		}
+	}
+	return DepStatus{
+		Name:  "fusermount3",
+		Found: true,
+		Path:  path,
+	}
+}
+
+func fuseInstallHint() string {
+	return "Install fuse3: apt-get install fuse3 (Debian/Ubuntu), dnf install fuse3-libs (Fedora), pacman -S fuse3 (Arch), or equivalent for your distribution"
+}
+
 // MissingPrereqs returns the list of missing dependencies.
 func MissingPrereqs() []DepStatus {
 	var missing []DepStatus
 	for _, d := range []DepStatus{
 		CheckPodman(),
+		CheckFUSE(),
 	} {
 		if !d.Found {
+			missing = append(missing, d)
+		}
+	}
+	if NeedsPodmanMachine() {
+		if d := CheckPodmanMachine(); !d.Found {
 			missing = append(missing, d)
 		}
 	}
