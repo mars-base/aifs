@@ -105,6 +105,16 @@ Examples:
 			return fmt.Errorf("failed to save config: %w", err)
 		}
 
+		// 3. Rebuild backup container to remove destroyed instance's entries
+		if cfg.PITR.Enabled {
+			bm, err := podman.NewBackupManager(cfg)
+			if err != nil {
+				fmt.Printf("  ⚠️  Warning: cannot rebuild backup container: %v\n", err)
+			} else if err := bm.EnsureBackupInfra(); err != nil {
+				fmt.Printf("  ⚠️  Warning: failed to update backup container: %v\n", err)
+			}
+		}
+
 		fmt.Printf("✓ instance %q destroyed\n", cfgInstance)
 		return nil
 	},
