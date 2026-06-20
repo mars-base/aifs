@@ -224,9 +224,9 @@ type fileHandle struct {
 }
 
 var (
-	_ fs.FileReader  = (*fileHandle)(nil)
-	_ fs.FileWriter  = (*fileHandle)(nil)
-	_ fs.FileFlusher = (*fileHandle)(nil)
+	_ fs.FileReader   = (*fileHandle)(nil)
+	_ fs.FileWriter   = (*fileHandle)(nil)
+	_ fs.FileFlusher  = (*fileHandle)(nil)
 	_ fs.FileReleaser = (*fileHandle)(nil)
 )
 

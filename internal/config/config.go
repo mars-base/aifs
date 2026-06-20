@@ -37,12 +37,12 @@ type InstanceConfig struct {
 
 // PostgresConfig holds PostgreSQL connection settings.
 type PostgresConfig struct {
-	URL      string `yaml:"url"`       // connection string (postgres://user:pass@host:port/db)
-	Host     string `yaml:"host"`      // host, default localhost
-	Port     int    `yaml:"port"`      // port, default 5432
-	User     string `yaml:"user"`      // user, default aifs
-	Password string `yaml:"password"`  // password, default aifs
-	Database string `yaml:"database"`  // database name, default aifs
+	URL      string `yaml:"url"`      // connection string (postgres://user:pass@host:port/db)
+	Host     string `yaml:"host"`     // host, default localhost
+	Port     int    `yaml:"port"`     // port, default 5432
+	User     string `yaml:"user"`     // user, default aifs
+	Password string `yaml:"password"` // password, default aifs
+	Database string `yaml:"database"` // database name, default aifs
 }
 
 // PodmanConfig holds Podman container settings.
@@ -50,9 +50,9 @@ type PodmanConfig struct {
 	ContainerName string `yaml:"container_name"` // PG container name, default aifs-pg
 	DataDir       string `yaml:"data_dir"`       // PG data directory (host path), default ~/.aifs/dbdata/<name>/data
 	ImageTag      string `yaml:"image_tag"`      // image tag, default ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0
-	HostPort      int    `yaml:"host_port"`       // host port for PG mapping, 0=auto-assign from 25432
-	SSHPort       int    `yaml:"ssh_port"`        // SSH port for pgbackrest, 0=auto-assign from 32201
-	Network       string `yaml:"network"`         // podman network name, default aifs-net
+	HostPort      int    `yaml:"host_port"`      // host port for PG mapping, 0=auto-assign from 25432
+	SSHPort       int    `yaml:"ssh_port"`       // SSH port for pgbackrest, 0=auto-assign from 32201
+	Network       string `yaml:"network"`        // podman network name, default aifs-net
 }
 
 // PITRConfig holds PITR backup/restore settings.
@@ -72,7 +72,7 @@ type BackupConfig struct {
 	ImageTag      string `yaml:"image_tag"`      // backup image tag, default aifs-backup:2.58.0
 	DataDir       string `yaml:"data_dir"`       // pgbackrest repo dir, default ~/.aifs/backup/data
 	LogDir        string `yaml:"log_dir"`        // pgbackrest log dir, default ~/.aifs/backup/log
-	RetentionFull int    `yaml:"retention_full"`  // number of full backups to retain, default 7
+	RetentionFull int    `yaml:"retention_full"` // number of full backups to retain, default 7
 }
 
 // FilesystemConfig holds PG-backed filesystem settings.

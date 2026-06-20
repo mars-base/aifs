@@ -33,7 +33,7 @@ func init() {
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Configuration management",
-	Long:  `config manages aifs configuration files.
+	Long: `config manages aifs configuration files.
 
   Use -o / --output to specify a custom output path (init command).`,
 }

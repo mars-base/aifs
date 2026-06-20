@@ -154,6 +154,7 @@ func wslReadFile(wslPath string) ([]byte, error) {
 	}
 	return out, nil
 }
+
 // given permission bits. The parent directory is created if it doesn't exist.
 func wslWriteFile(wslPath string, data []byte, perm os.FileMode) error {
 	distro := wslDistro()

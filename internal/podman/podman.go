@@ -12,16 +12,16 @@ import (
 	"strings"
 	"time"
 
+	res "github.com/mars-base/aifs/embed"
 	"github.com/mars-base/aifs/internal/config"
 	"github.com/mars-base/aifs/internal/platform"
-	res "github.com/mars-base/aifs/embed"
 )
 
 // Manager encapsulates Podman operations, bound to a configuration.
 type Manager struct {
-	cfg      *config.Config
-	podman   string // podman binary path
-	dataDir  string // aifs data directory (~/.aifs)
+	cfg     *config.Config
+	podman  string // podman binary path
+	dataDir string // aifs data directory (~/.aifs)
 }
 
 // New creates a Podman manager.

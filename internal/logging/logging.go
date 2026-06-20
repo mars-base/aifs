@@ -14,10 +14,10 @@ import (
 // DailyWriter implements io.Writer, writing to ~/.aifs/logs/aifs-YYYY-MM-DD.log.
 // It automatically rotates to a new file when the date changes.
 type DailyWriter struct {
-	mu     sync.Mutex
-	dir    string
-	today  string
-	file   *os.File
+	mu    sync.Mutex
+	dir   string
+	today string
+	file  *os.File
 }
 
 // NewDailyWriter creates a DailyWriter that writes log files under the aifs log directory.

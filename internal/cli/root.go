@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mars-base/aifs/internal/config"
-	"github.com/mars-base/aifs/internal/podman"
 	"github.com/mars-base/aifs/internal/platform"
+	"github.com/mars-base/aifs/internal/podman"
 )
 
 var (
@@ -76,4 +76,3 @@ func newPodman() (*podman.Manager, error) {
 func newBackupManager() (*podman.BackupManager, error) {
 	return podman.NewBackupManager(cfg)
 }
-

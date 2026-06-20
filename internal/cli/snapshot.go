@@ -131,7 +131,7 @@ var snapshotDeleteCmd = &cobra.Command{
 	Aliases: []string{"rm"},
 	Short:   "Delete a specific snapshot",
 	Example: `  aifs snapshot delete 20260614-143005F`,
-	Args: cobra.ExactArgs(1),
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadConfig(); err != nil {
 			return err

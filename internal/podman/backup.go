@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
+	res "github.com/mars-base/aifs/embed"
 	"github.com/mars-base/aifs/internal/config"
 	"github.com/mars-base/aifs/internal/platform"
-	res "github.com/mars-base/aifs/embed"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -346,7 +346,6 @@ func (m *BackupManager) EnsureBackupInfra() error {
 	}
 	return m.EnsureBackupContainer(confPath)
 }
-
 
 // ─── pgbackrest.conf generation ──────────────────────────────────
 

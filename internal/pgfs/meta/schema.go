@@ -8,14 +8,14 @@ import (
 
 // Schema holds the table names for a PG-backed filesystem.
 type Schema struct {
-	Prefix    string
-	Setting   string
-	Counter   string
-	Inode     string
-	Dentry    string
-	Chunk     string
-	Symlink   string
-	Blob      string
+	Prefix  string
+	Setting string
+	Counter string
+	Inode   string
+	Dentry  string
+	Chunk   string
+	Symlink string
+	Blob    string
 }
 
 // NewSchema builds table names from the given prefix.
