@@ -137,11 +137,12 @@ func DefaultConfigPath() string {
 }
 
 // GetUsedPorts returns the set of TCP ports currently listening on the container
-// host. All platforms now use host networking so every instance shares the same
-// network stack — we must probe to avoid port collisions.
+// host. On macOS we use bridge networking — containers have their own IPs on the
+// bridge, but published ports are still visible inside the VM via podman proxy.
+// We probe to avoid port collisions.
 //
 //	Linux:   ss -tlnH directly on the host
-//	macOS:   podman machine ssh <name> ss -tlnH (containers share the VM network)
+//	macOS:   podman machine ssh <name> ss -tlnH (probes inside the VM)
 //	Windows: wsl -d <distro> --exec ss -tlnH (containers share the WSL network)
 func GetUsedPorts() map[int]bool {
 	var cmd *exec.Cmd

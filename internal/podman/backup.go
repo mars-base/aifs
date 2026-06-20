@@ -82,7 +82,13 @@ func (m *BackupManager) WriteSSHConfig() (string, error) {
 			sshPort = 32201
 		}
 		fmt.Fprintf(&sb, "Host %s\n", inst.Podman.ContainerName)
-		sb.WriteString("    HostName 127.0.0.1\n")
+		// macOS + bridge: containers resolve each other via Podman DNS.
+		// Linux + host: all containers share the host network stack.
+		hostName := "127.0.0.1"
+		if platform.Detect() == platform.MacOS {
+			hostName = inst.Podman.ContainerName
+		}
+		fmt.Fprintf(&sb, "    HostName %s\n", hostName)
 		sb.WriteString("    StrictHostKeyChecking no\n")
 		sb.WriteString("    UserKnownHostsFile /dev/null\n")
 		sb.WriteString("    IdentityFile /root/.ssh/id_rsa\n")
@@ -259,10 +265,39 @@ func (m *BackupManager) buildBackupImage(tag string) error {
 
 // ─── Network management ──────────────────────────────────────────
 
-// EnsureNetwork is a no-op — all platforms use host networking, so no bridge
-// network needs to be created.
+// EnsureNetwork creates a bridge network on macOS so containers can
+// communicate via DNS-resolved container names.  Linux uses host networking.
 func (m *BackupManager) EnsureNetwork() error {
+	if platform.Detect() != platform.MacOS {
+		return nil
+	}
+	netName := m.cfg.Podman.Network
+	exists, err := m.networkExists(netName)
+	if err != nil {
+		return fmt.Errorf("checking network %s: %w", netName, err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := m.run("network", "create", netName); err != nil {
+		return fmt.Errorf("creating network %s: %w", netName, err)
+	}
+	fmt.Println("  ✓ Bridge network created:", netName)
 	return nil
+}
+
+// networkExists returns true if a Podman network with the given name exists.
+func (m *BackupManager) networkExists(name string) (bool, error) {
+	out, err := m.run("network", "ls", "--format", "{{.Name}}")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ─── Directory management ──────────────────────────────────────
@@ -519,10 +554,17 @@ func (m *BackupManager) createBackupContainer(confPath string) error {
 		return err
 	}
 
+	// macOS: use bridge network so containers resolve each other by name.
+	// Linux: keep host networking for zero-overhead.
+	networkMode := "host"
+	if platform.Detect() == platform.MacOS {
+		networkMode = m.cfg.Podman.Network
+	}
+
 	args := []string{
 		"run", "-d",
 		"--name", m.cfg.Backup.ContainerName,
-		"--network", "host",
+		"--network", networkMode,
 	}
 
 	args = append(args,

@@ -158,10 +158,40 @@ func (m *Manager) buildImage(tag string) error {
 
 // ─── Network management ──────────────────────────────────────────
 
-// EnsureNetwork is a no-op — all platforms use host networking, so no bridge
-// network needs to be created.
+// EnsureNetwork creates a bridge network on macOS so containers can
+// communicate via DNS-resolved container names.  Linux continues to
+// use --network host (zero overhead).
 func (m *Manager) EnsureNetwork() error {
+	if platform.Detect() != platform.MacOS {
+		return nil
+	}
+	netName := m.cfg.Podman.Network
+	exists, err := m.networkExists(netName)
+	if err != nil {
+		return fmt.Errorf("checking network %s: %w", netName, err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := m.run("network", "create", netName); err != nil {
+		return fmt.Errorf("creating network %s: %w", netName, err)
+	}
+	fmt.Println("  ✓ Bridge network created:", netName)
 	return nil
+}
+
+// networkExists returns true if a Podman network with the given name exists.
+func (m *Manager) networkExists(name string) (bool, error) {
+	out, err := m.run("network", "ls", "--format", "{{.Name}}")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // EnsureDirs creates required data directories on the host.
@@ -513,10 +543,18 @@ func (m *Manager) createContainer() error {
 	backupVol := m.cfg.Backup.DataDir
 	hostPort := m.cfg.Podman.HostPort
 
+	// macOS: use bridge network so containers can resolve each other by
+	// name and the Mac host can reach published ports via gvproxy.
+	// Linux: keep host networking for zero-overhead.
+	networkMode := "host"
+	if platform.Detect() == platform.MacOS {
+		networkMode = m.cfg.Podman.Network
+	}
+
 	args := []string{
 		"run", "-d",
 		"--name", m.cfg.Podman.ContainerName,
-		"--network", "host",
+		"--network", networkMode,
 	}
 
 	// Each PG instance gets a unique port via PGPORT / AIFS_SSH_PORT env vars.
@@ -525,9 +563,7 @@ func (m *Manager) createContainer() error {
 		"-e", fmt.Sprintf("AIFS_SSH_PORT=%d", m.cfg.Podman.SSHPort),
 	)
 
-	// macOS: podman machine runs inside a VM.  --network host shares the VM's
-	// network stack, but the Mac host still needs explicit port forwarding to
-	// reach the container.
+	// macOS + bridge: publish PG port so gvproxy forwards it to the Mac host.
 	if platform.Detect() == platform.MacOS {
 		args = append(args, "-p", fmt.Sprintf("%d:%d", hostPort, hostPort))
 	}

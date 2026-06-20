@@ -14,6 +14,32 @@
 
 set -euo pipefail
 
+# ─── Platform helpers ──────────────────────────────────────────────
+IS_MACOS=false
+[[ "$(uname -s)" == "Darwin" ]] && IS_MACOS=true
+
+# make_work_dir creates a temp directory accessible from the podman VM
+# on both Linux (/tmp) and macOS ($HOME/tmp, since /tmp is not shared).
+make_work_dir() {
+    local prefix="${1:-aifs-test}"
+    if $IS_MACOS; then
+        mkdir -p "$HOME/tmp"
+        mktemp -d "$HOME/tmp/${prefix}-XXXXXX"
+    else
+        mktemp -d "/tmp/${prefix}-XXXXXX"
+    fi
+}
+
+# sedi is a cross-platform in-place sed.
+# Detects sed flavour at runtime: GNU sed uses -i, BSD sed requires -i ''.
+sedi() {
+    if sed --version 2>/dev/null | grep -q GNU; then
+        sed -i "$@"
+    else
+        sed -i '' "$@"
+    fi
+}
+
 INSTANCE="${1:-smoke}"
 DB="${INSTANCE}_db"
 CONTAINER="aifs-pg-${INSTANCE}"
@@ -25,7 +51,7 @@ FORCE_CLEAN="${FORCE_CLEAN:-0}"
 SUFFIX="smoke-$$"
 BACKUP_CONTAINER="aifs-backup-${SUFFIX}"
 
-WORK_DIR="$(mktemp -d /tmp/aifs-smoke-XXXXXX)"
+WORK_DIR="$(make_work_dir aifs-smoke)"
 CONFIG="${WORK_DIR}/config.yaml"
 MOUNT_POINT="${WORK_DIR}/mnt"
 
@@ -86,11 +112,11 @@ echo "=== 1. config init ==="
 "$AIFS_BIN" config init -o "$CONFIG" --add "$INSTANCE" --base-dir "$WORK_DIR"
 
 # Isolate backup container from any existing aifs environment.
-sed -i "s/^\\( *container_name:\\) aifs-backup$/\\1 ${BACKUP_CONTAINER}/" "$CONFIG"
+sedi "s/^\\( *container_name:\\) aifs-backup$/\\1 ${BACKUP_CONTAINER}/" "$CONFIG"
 
 # Assign a free host port so this test does not collide with an existing PG instance.
 HOST_PORT=$(find_free_port)
-sed -i "s/^\\( *host_port:\\) .*/\\1 ${HOST_PORT}/" "$CONFIG"
+sedi "s/^\\( *host_port:\\) .*/\\1 ${HOST_PORT}/" "$CONFIG"
 
 echo ""
 echo "=== 2. config validate ==="
