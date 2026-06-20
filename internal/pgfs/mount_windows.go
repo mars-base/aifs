@@ -9,9 +9,41 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/winfsp/cgofuse/fuse"
+	"golang.org/x/sys/windows"
 )
+
+const uoiName = 2
+
+var (
+	user32                       = windows.NewLazySystemDLL("user32.dll")
+	procGetProcessWindowStation  = user32.NewProc("GetProcessWindowStation")
+	procCloseWindowStation       = user32.NewProc("CloseWindowStation")
+	procGetUserObjectInformation = user32.NewProc("GetUserObjectInformationW")
+)
+
+func getProcessWindowStation() windows.Handle {
+	r, _, _ := procGetProcessWindowStation.Call()
+	return windows.Handle(r)
+}
+
+func closeWindowStation(h windows.Handle) bool {
+	r, _, _ := procCloseWindowStation.Call(uintptr(h))
+	return r != 0
+}
+
+func getUserObjectInformation(h windows.Handle, nIndex int, pvInfo unsafe.Pointer, nLength uint32, lpnLengthNeeded *uint32) bool {
+	r, _, _ := procGetUserObjectInformation.Call(
+		uintptr(h),
+		uintptr(nIndex),
+		uintptr(pvInfo),
+		uintptr(nLength),
+		uintptr(unsafe.Pointer(lpnLengthNeeded)),
+	)
+	return r != 0
+}
 
 // NormalizeMountPoint ensures a Windows drive-letter mount point has a
 // trailing backslash so that filepath.Join produces correct paths.
@@ -94,6 +126,14 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string)
 	// Use the Mount Manager form for drive letters so the volume is visible
 	// across sessions; directory paths are passed through unchanged.
 	winFspMountPoint := toWinFspMountPoint(mountPoint)
+
+	// Directory mounts on Windows only work from an interactive window
+	// station (WinSta0). Drive-letter mounts go through the global Mount
+	// Manager and work from services/non-interactive contexts.
+	if !isDriveLetterMount(dirPath) && !isInteractiveSession() {
+		return fmt.Errorf("directory mounts on Windows require an interactive session (WinSta0); use a drive letter such as Z: or run aifs from a logged-on console")
+	}
+
 	fmt.Printf("mounted aifs at %s\n", mountPoint)
 	if !host.Mount(winFspMountPoint, nil) {
 		return fmt.Errorf("mounting %s failed", winFspMountPoint)
@@ -150,6 +190,30 @@ func waitForSentinelGone(sentinel string, attempts int, delay time.Duration) boo
 		time.Sleep(delay)
 	}
 	return false
+}
+
+// isInteractiveSession reports whether the current process is attached to the
+// interactive window station WinSta0. WinFsp directory (pathname) mounts only
+// work in interactive sessions; drive-letter mounts are session-independent.
+func isInteractiveSession() bool {
+	ws := getProcessWindowStation()
+	if ws == 0 {
+		return false
+	}
+	defer closeWindowStation(ws)
+
+	var needed uint32
+	getUserObjectInformation(ws, uoiName, nil, 0, &needed)
+	if needed == 0 {
+		return false
+	}
+
+	buf := make([]uint16, needed/2)
+	if !getUserObjectInformation(ws, uoiName, unsafe.Pointer(&buf[0]), needed, &needed) {
+		return false
+	}
+
+	return strings.EqualFold(windows.UTF16ToString(buf), "WinSta0")
 }
 
 // isDriveLetterMount reports whether path is a bare drive letter (e.g., "Z:"

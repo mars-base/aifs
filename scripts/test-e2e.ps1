@@ -1,17 +1,28 @@
-# scripts/e2e-windows.ps1 — End-to-end PITR test through the aifs filesystem on Windows.
+# scripts/test-e2e.ps1 — End-to-end PITR test through the aifs filesystem on Windows.
 #
 # Usage:
-#   .\scripts\e2e-windows.ps1 [instance_name]
+#   .\scripts\test-e2e.ps1 [instance_name]
 #
 # Environment:
-#   AIFS_BIN    path to aifs binary (default: .\build\aifs-windows-amd64.exe)
+#   AIFS_BIN    path to aifs binary (default: $env:USERPROFILE\.local\bin\aifs.exe)
 #   FORCE_CLEAN skip the confirmation prompt when set to "1"
 #
-# The script uses an isolated work directory and config file. It exercises:
-#   config init → start → format → mount → write pre-backup files →
-#   full snapshot → write post-backup files → record PITR target time →
-#   write final files → umount → restore → remount → verify file-level rollback.
-
+# The script uses an isolated work directory and config file. The test flow is:
+#   1. config init      create a temporary instance config
+#   2. start            launch the PostgreSQL + backup containers
+#   3. format           format the PG-backed filesystem volume
+#   4. mount            mount the filesystem at an available drive letter (background)
+#   5. write            create pre-backup files and directories
+#   6. snapshot create  take a full pgBackRest snapshot
+#   7. write            create post-backup files
+#   8. record time      record the PITR target time (UTC)
+#   9. write            create final files that should be rolled back
+#  10. umount           unmount the filesystem before restore
+#  11. restore          restore PostgreSQL to the recorded PITR time
+#  12. remount          mount the filesystem again
+#  13. verify           check that pre-target files exist and post-target files are gone
+#
+# On exit the script cleans up the mount, the containers, and the temp work dir.
 [CmdletBinding()]
 param(
     [string]$Instance = "pitrwin"
@@ -19,7 +30,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$AifsBin = if ($env:AIFS_BIN) { $env:AIFS_BIN } else { ".\build\aifs-windows-amd64.exe" }
+$AifsBin = if ($env:AIFS_BIN) { $env:AIFS_BIN } else { Join-Path $env:USERPROFILE ".local\bin\aifs.exe" }
 $ForceClean = $env:FORCE_CLEAN -eq "1"
 
 $Suffix = "pitrwin-$PID"
@@ -44,14 +55,6 @@ function Get-AvailableDriveLetter {
         }
     }
     throw "No available drive letter found"
-}
-
-function Get-FreePort {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    $port = $listener.LocalEndpoint.Port
-    $listener.Stop()
-    return $port
 }
 
 function Invoke-Aifs {
@@ -118,14 +121,12 @@ if (-not $ForceClean) {
 }
 
 $MountPoint = Get-AvailableDriveLetter
-$HostPort = Get-FreePort
 
 Write-Host "=== aifs filesystem PITR end-to-end test (Windows) ==="
 Write-Host "Instance:       ${Instance}"
 Write-Host "Work dir:       ${WorkDir}"
 Write-Host "Mount point:    ${MountPoint}"
 Write-Host "Backup container: ${BackupContainer}"
-Write-Host "Host port:      ${HostPort}"
 Write-Host ""
 
 New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
@@ -136,7 +137,6 @@ Invoke-Aifs config init -o $Config --add $Instance --base-dir $WorkDir
 # Isolate the backup container from any existing aifs environment.
 $cfgLines = Get-Content $Config
 $cfgLines = $cfgLines -replace '^( *)container_name: aifs-backup$', "`$1container_name: ${BackupContainer}"
-$cfgLines = $cfgLines -replace '^( *)host_port: .*$', "`$1host_port: ${HostPort}"
 $cfgLines | Set-Content -Path $Config -Encoding UTF8
 
 Write-Host ""

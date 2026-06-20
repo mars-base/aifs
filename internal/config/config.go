@@ -141,7 +141,7 @@ func (c *Config) InstanceDefaults(name string) *InstanceConfig {
 			DataDir:       filepath.Join(baseDir, "dbdata", name, "data"),
 			ImageTag:      c.Podman.ImageTag,
 			HostPort:      0, // auto-assigned
-			SSHPort:       0, // auto-assigned (Windows only)
+			SSHPort:       0, // auto-assigned
 		},
 		PITR: PITRConfig{
 			Enabled:          true,

@@ -5,6 +5,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -16,6 +17,18 @@ import (
 // at mountPoint. It waits for the synthetic sentinel file to appear before
 // returning, and records the mount in the shared state file.
 func mountInBackground(mountPoint string) error {
+	creationFlags := uint32(windows.CREATE_NEW_PROCESS_GROUP)
+	if isDriveLetterMount(mountPoint) {
+		creationFlags |= windows.DETACHED_PROCESS
+	}
+	return mountInBackgroundWithFlags(mountPoint, creationFlags)
+}
+
+// mountInBackgroundWithFlags lets the caller control the Windows process
+// creation flags. Drive-letter mounts tolerate DETACHED_PROCESS, while
+// directory pathname mounts need a regular process so WinFsp can access the
+// current session/window station.
+func mountInBackgroundWithFlags(mountPoint string, creationFlags uint32) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("determining executable: %w", err)
@@ -41,7 +54,7 @@ func mountInBackground(mountPoint string) error {
 	attr := &os.ProcAttr{
 		Files: []*os.File{null, logFile, logFile},
 		Sys: &windows.SysProcAttr{
-			CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+			CreationFlags: creationFlags,
 		},
 	}
 
@@ -79,6 +92,21 @@ func mountInBackground(mountPoint string) error {
 		return fmt.Errorf("background mount did not become ready: %s", logOut)
 	}
 	return fmt.Errorf("background mount did not become ready")
+}
+
+// isDriveLetterMount reports whether mountPoint is a Windows drive letter
+// (e.g. "Z:" or "Z:\") rather than a directory path.
+func isDriveLetterMount(mp string) bool {
+	mp = strings.TrimSpace(mp)
+	if mp == "" {
+		return false
+	}
+	mp = strings.TrimSuffix(mp, `\`)
+	if len(mp) != 2 || mp[1] != ':' {
+		return false
+	}
+	c := mp[0]
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 }
 
 // mountVisible reports whether mountPoint currently hosts a live aifs volume
