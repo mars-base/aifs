@@ -60,8 +60,8 @@ irm https://github.com/mars-base/aifs/releases/latest/download/install.ps1 | iex
 ### Linux / macOS
 
 ```bash
-# 1. Initialize config (add your project instance)
-aifs config init --add your-project
+# 1. Initialize config (choose a dedicated data directory)
+aifs config init --add your-project --base-dir ~/.aifs
 
 # 2. Start PostgreSQL and backup container
 aifs start -i your-project
@@ -95,8 +95,8 @@ cat ~/mnt/hello.txt                         # still there
 ### Windows
 
 ```powershell
-# 1. Initialize config (add your project instance)
-aifs config init --add your-project
+# 1. Initialize config (choose a dedicated data directory)
+aifs config init --add your-project --base-dir D:\aifs
 
 # 2. Start PostgreSQL and backup container
 aifs start -i your-project
@@ -127,6 +127,43 @@ type Z:\hello.txt                           # still there
 ```
 
 > **Tip**: On Windows, use a drive letter (Z:, X:, etc.) for session-independent access. Directory mounts require an interactive logged-on console session.
+
+## Data Storage
+
+By default all data (PostgreSQL database files, backups, WAL archives) lives under
+`~/.aifs/`. Use `--base-dir` to put it on a dedicated disk — this is the
+recommended setup for production or long-lived projects.
+
+```bash
+# Store everything on a dedicated volume
+aifs config init --add your-project --base-dir /mnt/ssd/aifs
+```
+
+When `--base-dir` is set, the directory layout looks like this:
+
+```
+/mnt/ssd/aifs/
+├── config.yaml          # aifs configuration
+├── dbdata/              # data files (per instance)
+│   └── your-project/
+│       └── data/
+├── backup/              # backup repository
+│   ├── data/
+│   └── log/
+```
+
+### Best practices by platform
+
+| Platform | Recommendation |
+|----------|---------------|
+| **Linux** | Mount a dedicated SSD or NVMe at `/data/aifs` or `/mnt/aifs`. Use XFS or ext4 — avoid NFS/CIFS for the database data directory. Ensure the user owns the mount point: `sudo chown $USER:$USER /data/aifs`. |
+| **macOS** | Use an external Thunderbolt/USB4 SSD for active projects. Default `~/tmp` is already shared with podman machine on macOS; if you use a path outside `/Users`, add a volume mount: `podman machine ssh podman-machine-default -- sudo mount -t virtiofs ...`. |
+| **Windows** | Mount to a drive letter on a fast local SSD (e.g., `--base-dir D:\aifs`). The WSL2 podman backend maps Windows drives under `/mnt/<letter>/`. Avoid network drives — database latency over SMB is prohibitive. |
+
+> **Important**: The database data directory (`dbdata/`) should always live on
+> local low-latency storage (SSD/NVMe). Backup archives can be on slower HDD or
+> network storage via `backup.data_dir` override in config. Never place
+> PostgreSQL data files on NFS or SMB — it will corrupt your database.
 
 ## Restore time formats
 
