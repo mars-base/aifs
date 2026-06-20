@@ -7,14 +7,54 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/winfsp/cgofuse/fuse"
 )
 
+// NormalizeMountPoint ensures a Windows drive-letter mount point has a
+// trailing backslash so that filepath.Join produces correct paths.
+// "Z:" → "Z:\", "Z:\" → "Z:\", "C:\dir" → "C:\dir".
+func NormalizeMountPoint(mountPoint string) string {
+	vol := filepath.VolumeName(mountPoint)
+	if vol != "" && len(mountPoint) == len(vol) {
+		return vol + "\\"
+	}
+	return mountPoint
+}
+
+// MountPathJoin is like filepath.Join(mountPoint, name) but handles bare
+// Windows drive letters correctly (Z: + .aifs-mounted → Z:\.aifs-mounted).
+func MountPathJoin(mountPoint, name string) string {
+	return filepath.Join(NormalizeMountPoint(mountPoint), name)
+}
+
+// toWinFspMountPoint converts a user-supplied mount point into the form
+// expected by WinFsp.  A bare drive letter like "Z:" is turned into
+// "\\.\\Z:" so that WinFsp uses the Mount Manager and the resulting drive
+// letter is visible in all sessions.  Directory paths and already-qualified
+// device paths are left unchanged.
+func toWinFspMountPoint(mountPoint string) string {
+	// Already-qualified device paths (e.g., "\\.\\Z:") pass through unchanged.
+	if strings.HasPrefix(strings.ToLower(mountPoint), "\\\\.\\") {
+		return mountPoint
+	}
+	vol := filepath.VolumeName(mountPoint)
+	if vol == "" {
+		return mountPoint
+	}
+	rest := mountPoint[len(vol):]
+	if rest != "" && rest != "\\" && rest != "/" {
+		return mountPoint
+	}
+	return "\\\\.\\" + vol
+}
+
 // Mount mounts the PG-backed filesystem at mountPoint using WinFsp/cgofuse.
 // This call blocks until the filesystem is unmounted.
 func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string) error {
+	dirPath := NormalizeMountPoint(mountPoint)
 	db, m, _, err := Open(ctx, pgURL, tablePrefix)
 	if err != nil {
 		return err
@@ -38,17 +78,25 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string)
 		return fmt.Errorf("instance is already mounted by another aifs mount")
 	}
 
-	if err := os.MkdirAll(mountPoint, 0755); err != nil {
-		return fmt.Errorf("creating mount point: %w", err)
+	// On Windows, mountPoint is often a drive letter (e.g., "Z:" or "Z:\").
+	// os.MkdirAll fails on bare drive letters because they aren't directory
+	// paths. Only create the directory for real directory paths.
+	if !isDriveLetterMount(dirPath) {
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			return fmt.Errorf("creating mount point: %w", err)
+		}
 	}
 
 	fs := &winFS{m: m, dataPath: dataPath}
 	host := fuse.NewFileSystemHost(fs)
 	fs.host = host
 
+	// Use the Mount Manager form for drive letters so the volume is visible
+	// across sessions; directory paths are passed through unchanged.
+	winFspMountPoint := toWinFspMountPoint(mountPoint)
 	fmt.Printf("mounted aifs at %s\n", mountPoint)
-	if !host.Mount(mountPoint, nil) {
-		return fmt.Errorf("mounting %s failed", mountPoint)
+	if !host.Mount(winFspMountPoint, nil) {
+		return fmt.Errorf("mounting %s failed", winFspMountPoint)
 	}
 	return nil
 }
@@ -60,14 +108,14 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string)
 // If the cooperative unmount times out and a background PID was recorded, the
 // process is killed as a force fallback.
 func Umount(mountPoint string) error {
-	sentinel := filepath.Join(mountPoint, SentinelName)
+	sentinel := MountPathJoin(mountPoint, SentinelName)
 
 	// Make sure the filesystem is currently responding before we try to unmount.
 	if _, err := os.Stat(sentinel); err != nil {
 		return fmt.Errorf("mount point %s does not appear to be an aifs volume: %w", mountPoint, err)
 	}
 
-	trigger := filepath.Join(mountPoint, ".UMOUNTIT")
+	trigger := MountPathJoin(mountPoint, ".UMOUNTIT")
 	// The Mkdir callback will call host.Unmount() and return an error.
 	_ = os.Mkdir(trigger, 0755)
 
@@ -102,4 +150,16 @@ func waitForSentinelGone(sentinel string, attempts int, delay time.Duration) boo
 		time.Sleep(delay)
 	}
 	return false
+}
+
+// isDriveLetterMount reports whether path is a bare drive letter (e.g., "Z:"
+// or "Z:\") as opposed to a real directory path. WinFsp/cgofuse mounts to
+// drive letters directly without needing a pre-existing directory.
+func isDriveLetterMount(path string) bool {
+	vol := filepath.VolumeName(path)
+	if vol == "" {
+		return false
+	}
+	rest := path[len(vol):]
+	return rest == "" || rest == "\\" || rest == "/"
 }

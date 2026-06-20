@@ -29,9 +29,17 @@ func (fs *winFS) ctx() context.Context {
 	return context.Background()
 }
 
+// normPath replaces Windows backslash separators with forward slashes so that
+// Go's path package (which treats \ as a literal character) handles WinFsp
+// paths correctly.
+func normPath(p string) string {
+	return strings.ReplaceAll(p, "\\", "/")
+}
+
 // splitPath normalizes a FUSE path into its components.
 // The root path returns an empty slice.
 func splitPath(p string) []string {
+	p = normPath(p)
 	p = path.Clean("/" + p)
 	if p == "/" {
 		return nil
@@ -70,7 +78,7 @@ func (fs *winFS) parentAndName(p string) (uint64, string, error) {
 
 // isSentinelPath reports whether p is the synthetic mount sentinel.
 func isSentinelPath(p string) bool {
-	return p == "/"+SentinelName
+	return normPath(p) == "/"+SentinelName
 }
 
 func (fs *winFS) sentinelAttr() *meta.Attr {
@@ -92,6 +100,16 @@ func (fs *winFS) sentinelAttr() *meta.Attr {
 func (fs *winFS) fillStat(out *fuse.Stat_t, a *meta.Attr) {
 	out.Ino = a.Ino
 	out.Mode = a.Mode
+	// WinFsp builds Windows ACLs from the POSIX mode.  The stored uid/gid
+	// come from the formatting/mounting user and may not match the uid
+	// assigned to other Windows sessions, which causes access denied for
+	// otherwise legitimate operations.  Force permissive modes on Windows
+	// so the volume behaves like a normal local drive.
+	if out.Mode&syscall.S_IFDIR == syscall.S_IFDIR {
+		out.Mode = syscall.S_IFDIR | 0777
+	} else {
+		out.Mode = (out.Mode & syscall.S_IFMT) | 0666
+	}
 	out.Nlink = a.Nlink
 	out.Uid = a.Uid
 	out.Gid = a.Gid
@@ -108,7 +126,7 @@ func (fs *winFS) fillStat(out *fuse.Stat_t, a *meta.Attr) {
 
 // Getattr implements fuse.FileSystemInterface.
 func (fs *winFS) Getattr(p string, stat *fuse.Stat_t, fh uint64) int {
-	if isSentinelPath(p) {
+	if isSentinelPath(p) || fh == sentinelIno {
 		fs.fillStat(stat, fs.sentinelAttr())
 		return 0
 	}
@@ -133,7 +151,7 @@ func (fs *winFS) Mkdir(p string, mode uint32) int {
 	if isSentinelPath(p) {
 		return -fuse.EACCES
 	}
-	if p == "/.UMOUNTIT" {
+	if normPath(p) == "/.UMOUNTIT" {
 		if fs.host != nil {
 			go fs.host.Unmount()
 		}
@@ -274,6 +292,9 @@ func (fs *winFS) Truncate(p string, size int64, fh uint64) int {
 
 // Open implements fuse.FileSystemInterface.
 func (fs *winFS) Open(p string, flags int) (int, uint64) {
+	if isSentinelPath(p) {
+		return 0, sentinelIno
+	}
 	attr, err := fs.lookup(p)
 	if err != nil {
 		return mapErrno(err), ^uint64(0)
@@ -286,6 +307,9 @@ func (fs *winFS) Open(p string, flags int) (int, uint64) {
 
 // Create implements fuse.FileSystemInterface.
 func (fs *winFS) Create(p string, flags int, mode uint32) (int, uint64) {
+	if isSentinelPath(p) {
+		return -fuse.EACCES, ^uint64(0)
+	}
 	parentIno, name, err := fs.parentAndName(p)
 	if err != nil {
 		return mapErrno(err), ^uint64(0)
@@ -300,6 +324,9 @@ func (fs *winFS) Create(p string, flags int, mode uint32) (int, uint64) {
 
 // Read implements fuse.FileSystemInterface.
 func (fs *winFS) Read(p string, buf []byte, off int64, fh uint64) int {
+	if fh == sentinelIno {
+		return 0
+	}
 	if fh == ^uint64(0) {
 		return -fuse.EBADF
 	}
@@ -354,6 +381,9 @@ func (fs *winFS) Readdir(p string, fill func(name string, stat *fuse.Stat_t, ofs
 	}
 	fill(".", nil, 0)
 	fill("..", nil, 0)
+	if ino == meta.RootIno {
+		fill(SentinelName, &fuse.Stat_t{Ino: sentinelIno, Mode: syscall.S_IFREG | 0644}, 0)
+	}
 	for _, e := range entries {
 		mode := e.Mode
 		if mode == 0 {

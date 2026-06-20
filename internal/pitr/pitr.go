@@ -41,16 +41,35 @@ func New(cfg *config.Config, pm *podman.Manager, bm *podman.BackupManager) *Mana
 func (m *Manager) EnsureStanza() error {
 	stanza := m.cfg.PITR.PgBackRestStanza
 
-	// Check if stanza already exists
-	out, err := m.pgbackrest(false, "--stanza="+stanza, "stanza-create", "--log-level-console=info")
-	if err != nil {
-		// stanza-create errors if already exists, ignore
-		if !strings.Contains(err.Error(), "already exists") && !strings.Contains(out, "already exists") {
-			_ = m.backup.EnsureRepoReadable()
-			return fmt.Errorf("creating pgBackRest stanza: %w\n%s", err, out)
+	// pgBackRest may connect before PostgreSQL has fully finished crash recovery
+	// or initdb, resulting in "database system is starting up". Retry with
+	// backoff instead of failing the whole start flow.
+	var out string
+	var err error
+	for i := 0; i < 15; i++ {
+		out, err = m.pgbackrest(false, "--stanza="+stanza, "stanza-create", "--log-level-console=info")
+		if err == nil {
+			fmt.Println("→ pgBackRest stanza created")
+			break
 		}
-	} else {
-		fmt.Println("→ pgBackRest stanza created")
+		// stanza-create errors if already exists, ignore
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(out, "already exists") {
+			err = nil
+			break
+		}
+		// Retry on transient startup races.
+		msg := err.Error() + out
+		if strings.Contains(msg, "database system is starting up") ||
+			strings.Contains(msg, "unable to check pg1") {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		_ = m.backup.EnsureRepoReadable()
+		return fmt.Errorf("creating pgBackRest stanza: %w\n%s", err, out)
+	}
+	if err != nil {
+		_ = m.backup.EnsureRepoReadable()
+		return fmt.Errorf("creating pgBackRest stanza: %w\n%s", err, out)
 	}
 
 	// Make sure repo files are readable by the postgres user during archive-get.

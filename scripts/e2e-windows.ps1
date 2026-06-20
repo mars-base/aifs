@@ -55,11 +55,13 @@ function Get-FreePort {
 }
 
 function Invoke-Aifs {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $cmd = @($AifsBin, "-c", $Config, "-i", $Instance) + $Arguments
-    Write-Host "  > $cmd"
-    & $cmd[0] $cmd[1..($cmd.Length - 1)]
-    if ($LASTEXITCODE -ne 0) { throw "aifs failed: $cmd" }
+    # Use $args (simple function) instead of [Parameter()] (advanced function)
+    # to prevent PowerShell from intercepting flags like -o as common parameters
+    # (-OutVariable / -OutBuffer) in PowerShell 5.1.
+    $allArgs = @($AifsBin, "-c", $Config, "-i", $Instance) + $args
+    Write-Host "  > $($allArgs -join ' ')"
+    & $allArgs[0] $allArgs[1..$allArgs.Length]
+    if ($LASTEXITCODE -ne 0) { throw "aifs failed: $($allArgs -join ' ')" }
 }
 
 function Wait-PostgresReady {
@@ -76,6 +78,9 @@ function Wait-PostgresReady {
         }
         Start-Sleep -Seconds 1
     }
+    Write-Host "  ✗ PostgreSQL did not become ready; dumping container status and logs..."
+    try { & podman ps -a | Out-String | Write-Host } catch { }
+    try { & podman logs --tail 100 $Container 2>&1 | Out-String | Write-Host } catch { }
     throw "PostgreSQL did not become ready"
 }
 
@@ -100,7 +105,7 @@ function Cleanup {
     }
 }
 
-trap { Cleanup; break }
+# trap { Cleanup; break }
 
 if (-not $ForceClean) {
     Write-Host "⚠️  This script will create an isolated aifs environment under ${WorkDir}."

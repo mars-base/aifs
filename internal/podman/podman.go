@@ -34,6 +34,14 @@ func New(cfg *config.Config) (*Manager, error) {
 	if dataDir == "" {
 		dataDir = platform.DefaultConfigDir()
 	}
+
+	// Ensure the WSL podman service is reachable and CONTAINER_HOST is
+	// set in the environment.  This is idempotent; on platforms other
+	// than Windows it is a no-op.
+	if err := EnsurePodmanService(); err != nil {
+		return nil, fmt.Errorf("podman service: %w", err)
+	}
+
 	return &Manager{
 		cfg:     cfg,
 		podman:  path,

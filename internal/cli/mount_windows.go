@@ -5,7 +5,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -51,9 +50,13 @@ func mountInBackground(mountPoint string) error {
 		return fmt.Errorf("starting background mount: %w", err)
 	}
 
-	for range 50 {
+	// Wait for the background mount to become visible. WinFsp drive-letter
+	// mounts can take a few seconds to initialise before the FUSE filesystem
+	// starts responding to requests, so we poll with a generous timeout.
+	for range 150 {
 		time.Sleep(200 * time.Millisecond)
-		if mountVisible(mountPoint) {
+		visible := mountVisible(mountPoint)
+		if visible {
 			rec := pgfs.MountRecord{
 				MountPoint: mountPoint,
 				Instance:   cfgInstance,
@@ -81,6 +84,7 @@ func mountInBackground(mountPoint string) error {
 // mountVisible reports whether mountPoint currently hosts a live aifs volume
 // by checking for the synthetic sentinel file.
 func mountVisible(mountPoint string) bool {
-	_, err := os.Stat(filepath.Join(mountPoint, pgfs.SentinelName))
+	mp := pgfs.NormalizeMountPoint(mountPoint)
+	_, err := os.Stat(mp + pgfs.SentinelName)
 	return err == nil
 }
