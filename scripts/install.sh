@@ -76,6 +76,32 @@ detect_linux_distro() {
   fi
 }
 
+# auto_install_pkg tries to install a package with the system package manager.
+# Returns 0 on success, 1 on failure (unknown distro / install error).
+auto_install_pkg() {
+  DISTRO="$(detect_linux_distro)"
+  case "$DISTRO" in
+    ubuntu|debian)
+      sudo apt-get update && sudo apt-get install -y "$@"
+      ;;
+    fedora|rhel|centos|rocky|almalinux)
+      sudo dnf install -y "$@"
+      ;;
+    arch|manjaro)
+      sudo pacman -S --noconfirm "$@"
+      ;;
+    alpine)
+      sudo apk add "$@"
+      ;;
+    opensuse*|sles)
+      sudo zypper install -y "$@"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # ─── Phase 1: Binary download ──────────────────────────────────────
 
 ARCH="$(uname -m)"
@@ -184,30 +210,15 @@ elif $IS_LINUX; then
     PODMAN_VER="$(podman --version 2>/dev/null || echo 'unknown')"
     ok "Podman found ($PODMAN_VER)"
   else
-    warn "Podman not found"
-    DISTRO="$(detect_linux_distro)"
-    case "$DISTRO" in
-      ubuntu|debian)
-        cmd_hint "sudo apt-get update && sudo apt-get install -y podman"
-        ;;
-      fedora|rhel|centos|rocky|almalinux)
-        cmd_hint "sudo dnf install -y podman"
-        ;;
-      arch|manjaro)
-        cmd_hint "sudo pacman -S podman"
-        ;;
-      alpine)
-        cmd_hint "sudo apk add podman"
-        ;;
-      opensuse*|sles)
-        cmd_hint "sudo zypper install podman"
-        ;;
-      *)
-        cmd_hint "Install podman via your system package manager"
-        cmd_hint "Or: curl -fsSL -o ~/.local/bin/podman https://github.com/89luca89/podman-launcher/releases/latest/download/podman-launcher-amd64 && chmod +x ~/.local/bin/podman"
-        ;;
-    esac
-    die "Please install Podman, then re-run this script."
+    warn "Podman not found — installing..."
+    if auto_install_pkg podman; then
+      ok "Podman installed"
+    else
+      warn "Could not auto-install podman (unknown distro)"
+      cmd_hint "Install podman via your system package manager"
+      cmd_hint "Or: curl -fsSL -o ~/.local/bin/podman https://github.com/89luca89/podman-launcher/releases/latest/download/podman-launcher-amd64 && chmod +x ~/.local/bin/podman"
+      die "Please install Podman, then re-run this script."
+    fi
   fi
 
   # --- fusermount3 (FUSE) ---
@@ -215,30 +226,24 @@ elif $IS_LINUX; then
     FUSE_BIN="$(command -v fusermount3 2>/dev/null || command -v fusermount)"
     ok "FUSE umount helper found: ${FUSE_BIN}"
   else
-    warn "fusermount3 not found — needed for 'aifs umount'"
+    warn "fusermount3 not found — needed for 'aifs umount', installing..."
+    # Distro-specific package names for fuse3
     DISTRO="$(detect_linux_distro)"
     case "$DISTRO" in
-      ubuntu|debian)
-        cmd_hint "sudo apt-get install -y fuse3"
-        ;;
-      fedora|rhel|centos|rocky|almalinux)
-        cmd_hint "sudo dnf install -y fuse3-libs"
-        ;;
-      arch|manjaro)
-        cmd_hint "sudo pacman -S fuse3"
-        ;;
-      alpine)
-        cmd_hint "sudo apk add fuse3"
-        ;;
-      opensuse*|sles)
-        cmd_hint "sudo zypper install fuse3"
-        ;;
-      *)
-        cmd_hint "Install fuse3 via your system package manager"
-        ;;
+      ubuntu|debian)       PKG="fuse3" ;;
+      fedora|rhel|centos|rocky|almalinux) PKG="fuse3-libs" ;;
+      arch|manjaro)         PKG="fuse3" ;;
+      alpine)               PKG="fuse3" ;;
+      opensuse*|sles)       PKG="fuse3" ;;
+      *)                    PKG="" ;;
     esac
-    warn "'aifs umount' will not work without fusermount3/fusermount"
-    echo ""
+    if [ -n "$PKG" ] && auto_install_pkg "$PKG"; then
+      ok "fuse3 installed ($PKG)"
+    else
+      warn "Could not auto-install fuse3"
+      [ -n "$PKG" ] && cmd_hint "sudo apt-get install -y fuse3 (or equivalent for your distro)"
+      warn "'aifs umount' will not work without fusermount3/fusermount"
+    fi
   fi
 fi
 
