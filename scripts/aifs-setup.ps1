@@ -124,14 +124,14 @@ function Pause-IfInteractive {
 # via Get-Command first, and wrap the call in try/catch so a wsl invocation
 # failure is reported as a warning rather than crashing setup.
 function Invoke-Wsl {
-    param([Parameter(Mandatory)][string[]]$Args)
+    param([Parameter(Mandatory)][string[]]$WslArgs)
     $exe = (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source
     if (-not $exe) {
         Write-Host "  wsl.exe not found on PATH; skipping wsl invocation."
         return $null
     }
     try {
-        $p = Start-Process -FilePath $exe -ArgumentList $Args -Wait -PassThru -NoNewWindow `
+        $p = Start-Process -FilePath $exe -ArgumentList $WslArgs -Wait -PassThru -NoNewWindow `
             -RedirectStandardOutput "$env:TEMP\wsl.out" -RedirectStandardError "$env:TEMP\wsl.err"
         return $p.ExitCode
     } catch {
@@ -176,7 +176,7 @@ if ($cpuOk) {
 
     # Cross-check 2: wsl --status actually works
     if (-not $cpuOk -and (CmdExists "wsl")) {
-        $probeRc = Invoke-Wsl -Args "--status"
+        $probeRc = Invoke-Wsl -WslArgs "--status"
         if ($probeRc -eq 0) {
             Print-Result "wsl --status succeeded" "ok" "WSL2 is functional"
             $cpuOk = $true
@@ -209,7 +209,7 @@ $wslWorking = $false
 
 if ($wslExists) {
     # Probe: does wsl actually work? (inbox stub returns help text for everything)
-    $probeRc = Invoke-Wsl -Args "--status"
+    $probeRc = Invoke-Wsl -WslArgs "--status"
     if ($probeRc -eq 0) {
         $wslWorking = $true
         Print-Result "WSL already installed and working" "skip"
@@ -289,7 +289,7 @@ if (-not $wslWorking) {
     # Step 2: Try wsl --install --no-distribution (may upgrade inbox stub to Store version)
     Write-Host ""
     Write-Host "  Running: wsl --install --no-distribution"
-    $wslInstallRc = Invoke-Wsl -Args "--install","--no-distribution"
+    $wslInstallRc = Invoke-Wsl -WslArgs "--install","--no-distribution"
 
     if ($wslInstallRc -eq 0) {
         Print-Result "wsl --install --no-distribution" "ok"
@@ -305,7 +305,7 @@ if (-not $wslWorking) {
 
 # Set WSL2 as default version and update kernel (runs whether freshly installed or pre-existing)
 if (CmdExists "wsl") {
-    $setDefaultRc = Invoke-Wsl -Args "--set-default-version","2"
+    $setDefaultRc = Invoke-Wsl -WslArgs "--set-default-version","2"
     if ($setDefaultRc -eq 0) {
         Print-Result "WSL default version 2" "ok"
     } elseif ($null -eq $setDefaultRc) {
@@ -314,7 +314,7 @@ if (CmdExists "wsl") {
         Print-Result "WSL set-default-version" "warn" "Exit code: $setDefaultRc — reboot may be needed"
     }
 
-    $updateKernelRc = Invoke-Wsl -Args "--update"
+    $updateKernelRc = Invoke-Wsl -WslArgs "--update"
     if ($updateKernelRc -eq 0) {
         Print-Result "WSL kernel updated" "ok"
     } elseif ($null -eq $updateKernelRc) {
