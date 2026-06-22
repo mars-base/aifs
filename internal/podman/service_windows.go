@@ -58,14 +58,21 @@ func startPodmanService() {
 	exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
 		"rm -rf /tmp/storage-run-1000/containers /tmp/storage-run-1000/libpod/tmp 2>/dev/null").Run()
 
-	// Launch podman system service via cmd /c start "".
+	// Launch podman system service via cmd /c start "" /B.
 	//
 	// Go's exec.Cmd.Start puts the child into Go's own Windows Job Object,
 	// which is torn down when aifs exits — killing wsl.exe and shutting down
 	// the WSL VM.  cmd /c start uses ShellExecuteEx internally, which creates
 	// the process outside of Go's job, so wsl.exe survives aifs exit.
+	//
+	// The /B flag prevents `start` from opening a new console window for the
+	// long-running podman service. Without it, a black cmd window stays open
+	// on the desktop showing the service's WARN/log lines, and closing that
+	// window kills wsl.exe and stops the service. /B keeps the process
+	// windowless while still detached from Go's job. HideWindow also hides
+	// the transient cmd.exe itself.
 	launch := func(distroArg string) error {
-		args := []string{"/c", "start", "", "wsl"}
+		args := []string{"/c", "start", "", "/B", "wsl"}
 		if distroArg != "" {
 			args = append(args, "-d", distroArg)
 		}

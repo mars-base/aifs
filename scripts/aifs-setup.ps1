@@ -471,6 +471,35 @@ if ($podmanInstalled) {
         Print-Result "Podman version" "ok" $podmanVer
     }
 }
+
+# --- Podman machine (WSL distro) ------------------------------------
+# aifs does NOT use `podman machine start`; it talks to the podman API
+# service directly inside the machine's WSL distro (podman-machine-default).
+# But that distro must exist first -- `podman machine init` creates it.
+# This is idempotent: skipped if a machine already exists.
+if (CmdExists "podman") {
+    Write-Host "  Ensuring podman machine exists..."
+    $mlOut = cmd.exe /c "chcp 437 >nul & podman machine list --format {{.Name}}" 2>$null
+    $hasMachine = $false
+    foreach ($line in ($mlOut -split "`n")) {
+        if ($line.Trim() -ne "") { $hasMachine = $true; break }
+    }
+    if ($hasMachine) {
+        Print-Result "Podman machine exists" "skip"
+    } else {
+        Write-Host "  Running: podman machine init"
+        $initProc = Start-Process -FilePath "podman" `
+            -ArgumentList "machine","init" `
+            -Wait -PassThru -NoNewWindow
+        if ($initProc.ExitCode -eq 0) {
+            Print-Result "Podman machine initialized" "ok"
+        } else {
+            Print-Result "podman machine init failed" "warn" "Exit code: $($initProc.ExitCode)"
+            Write-Host "  aifs start will fail until a machine exists. Try manually:"
+            Write-Host "    podman machine init"
+        }
+    }
+}
 Write-Host ""
 
 function WinFspInstalled {
