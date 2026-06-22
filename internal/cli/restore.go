@@ -108,11 +108,9 @@ Examples:
 			fmt.Printf("  Instance:    %s\n", cfg.Instance)
 			fmt.Printf("  Target time: %s\n", targetTime.Format("2006-01-02 15:04:05"))
 			fmt.Printf("  This will restore the database to that time point. All changes after it will be permanently lost!\n")
-			fmt.Printf("\nConfirm? [y/N]: ")
+			fmt.Println()
 
-			var answer string
-			fmt.Scanln(&answer)
-			if answer != "y" && answer != "Y" && answer != "yes" {
+			if !confirmPrompt("Confirm? [y/N]: ") {
 				fmt.Println("Cancelled")
 				return nil
 			}

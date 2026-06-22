@@ -83,11 +83,9 @@ Examples:
 				fmt.Printf("\n  Data directories preserved on host:\n")
 				fmt.Printf("    data: %s\n", inst.Podman.DataDir)
 			}
-			fmt.Printf("\nConfirm? [y/N]: ")
+			fmt.Println()
 
-			var answer string
-			fmt.Scanln(&answer)
-			if answer != "y" && answer != "Y" && answer != "yes" {
+			if !confirmPrompt("Confirm? [y/N]: ") {
 				fmt.Println("Cancelled")
 				return nil
 			}
