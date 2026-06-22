@@ -568,6 +568,8 @@ func (m *BackupManager) createBackupContainer(confPath string) error {
 		"run", "-d",
 		"--name", m.cfg.Backup.ContainerName,
 		"--network", networkMode,
+		// Restart automatically if it exits (WSL VM restart, terminal close).
+		"--restart", "unless-stopped",
 	}
 
 	args = append(args,

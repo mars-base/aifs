@@ -623,6 +623,10 @@ func (m *Manager) createContainer() error {
 		"run", "-d",
 		"--name", m.cfg.Podman.ContainerName,
 		"--network", networkMode,
+		// Restart automatically if the container exits (e.g. WSL VM restart,
+		// podman service interruption when the launching terminal closes).
+		// "unless-stopped" preserves an explicit `aifs stop`.
+		"--restart", "unless-stopped",
 	}
 
 	// Each PG instance gets a unique port via PGPORT / AIFS_SSH_PORT env vars.
