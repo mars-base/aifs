@@ -49,11 +49,15 @@ If the script reports a reboot is required, restart the machine and then **run t
 
 ### Pre-built binaries
 
-```bash
-# Linux / macOS
-curl -fsSL https://github.com/mars-base/aifs/releases/latest/download/install.sh | sh
+Linux / macOS:
 
-# Windows (PowerShell)
+```bash
+curl -fsSL https://github.com/mars-base/aifs/releases/latest/download/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
 irm https://github.com/mars-base/aifs/releases/latest/download/install.ps1 | iex
 ```
 
