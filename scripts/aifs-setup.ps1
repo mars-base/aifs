@@ -1,4 +1,4 @@
-# aifs-setup.ps1 — Check virtualization, install WSL2 + podman CLI for aifs on Windows
+﻿# aifs-setup.ps1 — Check virtualization, install WSL2 + podman CLI for aifs on Windows
 # Usage: powershell -ExecutionPolicy Bypass -File aifs-setup.ps1 [-Proxy <url>|none]
 #
 # Steps:
