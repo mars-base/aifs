@@ -28,19 +28,26 @@ Write-Host "  AIFS Setup - WSL2 + Podman Installer"
 Write-Host "========================================"
 Write-Host ""
 
-# ─── Helper: read one wmic property ─────────────────────
+# ─── Helper: read one CPU property via CIM ──────────────
+# Note: Win11 24H2 / LTSC 2024 removed wmic.exe by default, so we use
+# Get-CimInstance Win32_Processor (the modern WMI replacement) instead.
+# CIM returns booleans as "True"/"False" (title case), unlike wmic's
+# "TRUE"/"FALSE"; callers compare case-insensitively.
+
+$script:cpuInfo = $null
+function Get-CpuInfo {
+    if ($null -ne $script:cpuInfo) { return $script:cpuInfo }
+    $script:cpuInfo = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue
+    return $script:cpuInfo
+}
 
 function ReadWmic {
     param([string]$prop)
-    $raw = cmd.exe /c "wmic cpu get $prop /value" 2>&1
-    $str = ($raw | Out-String).Trim()
-    foreach ($line in $str.Split([Environment]::NewLine, [StringSplitOptions]::RemoveEmptyEntries)) {
-        $line = $line.Trim()
-        if ($line -match "^\s*$prop\s*=\s*(.+)$") {
-            return $Matches[1].Trim()
-        }
-    }
-    return "UNKNOWN"
+    $cpu = Get-CpuInfo
+    if (-not $cpu) { return "UNKNOWN" }
+    $val = $cpu.$prop
+    if ($null -eq $val) { return "UNKNOWN" }
+    return "$val".Trim()
 }
 
 # ─── Helper: check if an exe exists ─────────────────────
@@ -104,7 +111,8 @@ Write-Host "  SLAT (EPT)   : $slat"
 Write-Host "  VMM Monitor  : $vmm"
 Write-Host ""
 
-$cpuOk = ($virtFW -eq "TRUE") -and ($slat -eq "TRUE") -and ($vmm -eq "TRUE")
+# CIM returns "True"/"False", legacy wmic returned "TRUE"/"FALSE"; compare case-insensitively.
+$cpuOk = ($virtFW -ieq "TRUE") -and ($slat -ieq "TRUE") -and ($vmm -ieq "TRUE")
 
 if ($cpuOk) {
     Print-Result "CPU supports virtualization" "ok"
