@@ -97,6 +97,24 @@ function Print-Result {
     if ($detail) { Write-Host "         $detail" }
 }
 
+# ─── Helper: pause for a keypress in interactive sessions ───
+# In an interactive console (e.g. `irm | iex` run by a human), wait for a
+# keypress so the user can read the message before the window closes. In a
+# non-interactive context (WinRM, scheduled task S4U, CI), return immediately
+# — blocking on Read-Host there would hang forever.
+function Pause-IfInteractive {
+    param([string]$prompt = "Press any key to continue...")
+    $interactive = $false
+    try {
+        $interactive = [Environment]::UserInteractive -and ($Host.Name -eq "ConsoleHost")
+    } catch { $interactive = $false }
+    if (-not $interactive) { return }
+    Write-Host ""
+    Write-Host $prompt -NoNewline
+    try { [void][System.Console]::ReadKey($true) } catch { [void](Read-Host) }
+    Write-Host ""
+}
+
 # ═══════════════════════════════════════════════════════════
 # PHASE 1: Check CPU virtualization
 # ═══════════════════════════════════════════════════════════
@@ -237,8 +255,11 @@ if (-not $wslWorking) {
         Write-Host "         The script will resume from where it left off."
         Write-Host "  ============================================================"
         Print-Result "Reboot required" "warn" "dism returned 3010 — reboot then re-run"
-        # Exit 0 (not 1): a required reboot is a normal setup step, not a failure.
-        # exit 1 would make `irm | iex` abort with an error and hide this message.
+        # A required reboot is a normal setup step, not a failure: exit 0 (not 1)
+        # so `irm | iex` does not abort with an error. Pause in an interactive
+        # session so the user can read this before the window closes; in
+        # non-interactive contexts (WinRM/scheduled task) just return.
+        Pause-IfInteractive "Press any key to exit, then reboot and re-run the install command..."
         exit 0
     }
 
