@@ -38,6 +38,7 @@ func wslPath(hostPath string) string {
 
 	try := func(d string) string {
 		cmd := exec.Command("wsl", "-d", d, "--exec", "wslpath", "-u", hostPath)
+		hideWindow(cmd)
 		out, err := cmd.Output()
 		if err != nil {
 			return ""
@@ -83,6 +84,7 @@ func wslHomeDir() string {
 	}
 	distro := wslDistro()
 	cmd := exec.Command("wsl", "-d", distro, "--exec", "sh", "-c", "echo $HOME")
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		cachedWSLHome = "/home/user" // sensible default
@@ -137,6 +139,7 @@ func toWSLPath(elem ...string) string {
 func wslMkdirAll(wslPath string) error {
 	distro := wslDistro()
 	cmd := exec.Command("wsl", "-d", distro, "--exec", "mkdir", "-p", wslPath)
+	hideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("wsl mkdir %s: %w (output: %s)", wslPath, err, string(out))
@@ -148,6 +151,7 @@ func wslMkdirAll(wslPath string) error {
 func wslReadFile(wslPath string) ([]byte, error) {
 	distro := wslDistro()
 	cmd := exec.Command("wsl", "-d", distro, "--exec", "cat", wslPath)
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("wsl read %s: %w", wslPath, err)
@@ -161,6 +165,7 @@ func wslWriteFile(wslPath string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(wslPath)
 	cmd := exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
 		fmt.Sprintf("mkdir -p '%s' && cat > '%s' && chmod %o '%s'", dir, wslPath, perm, wslPath))
+	hideWindow(cmd)
 	cmd.Stdin = bytes.NewReader(data)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

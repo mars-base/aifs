@@ -408,6 +408,7 @@ func removeHostDir(podmanPath, dir string) error {
 		"-v", fmt.Sprintf("%s:/target", hostMountPath(parent)),
 		"alpine:3.20", "sh", "-c", fmt.Sprintf("rm -rf /target/%s", base),
 	)
+	hideWindow(cmd)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
@@ -471,6 +472,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 	// but were left behind by a killed/crashed process.
 	orphanPrefix := "aifs-restore-" + m.cfg.Podman.ContainerName + "-"
 	rmOrphans := exec.Command(m.podman, "ps", "-a", "--filter", "name="+orphanPrefix, "-q")
+	hideWindow(rmOrphans)
 	if out, err := rmOrphans.Output(); err == nil {
 		for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			id = strings.TrimSpace(id)
@@ -502,6 +504,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 	// Run without timeout -- restore can take a long time for large databases.
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
+	hideWindow(cmd)
 
 	var stdoutBuf, stderrBuf strings.Builder
 	if tailLogs {
@@ -541,6 +544,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 func (m *Manager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -554,6 +558,7 @@ func (m *Manager) run(args ...string) (string, error) {
 func (m *Manager) runInteractive(args ...string) error {
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
+	hideWindow(cmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -55,8 +54,10 @@ func startPodmanService() {
 	fmt.Println("-> Starting WSL podman service...")
 
 	// Clean stale boot-ID cache from a previous WSL session.
-	exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
-		"rm -rf /tmp/storage-run-1000/containers /tmp/storage-run-1000/libpod/tmp 2>/dev/null").Run()
+	cleanCmd := exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
+		"rm -rf /tmp/storage-run-1000/containers /tmp/storage-run-1000/libpod/tmp 2>/dev/null")
+	hideWindow(cleanCmd)
+	cleanCmd.Run()
 
 	// Launch podman system service via cmd /c start "" /B.
 	//
@@ -78,7 +79,7 @@ func startPodmanService() {
 		}
 		args = append(args, "--exec", "podman", "system", "service", "-t", "0", "tcp://0.0.0.0:2375")
 		cmd := exec.Command("cmd", args...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		hideWindow(cmd)
 		return cmd.Run()
 	}
 
@@ -108,6 +109,7 @@ func startPodmanService() {
 func tcpServiceListening(distro string) bool {
 	cmd := exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
 		"ss -tlnp 2>/dev/null | grep -q 2375")
+	hideWindow(cmd)
 	return cmd.Run() == nil
 }
 
@@ -120,17 +122,22 @@ func ensurePortproxy(distro string) {
 	}
 
 	// Skip if the rule already points to the correct IP.
-	if out, _ := exec.Command("netsh", "interface", "portproxy", "show", "v4tov4").Output(); strings.Contains(string(out), wslIP+":2375") {
+	showCmd := exec.Command("netsh", "interface", "portproxy", "show", "v4tov4")
+	hideWindow(showCmd)
+	if out, _ := showCmd.Output(); strings.Contains(string(out), wslIP+":2375") {
 		return
 	}
 
 	// Delete any stale rule, then add the current one.
-	exec.Command("netsh", "interface", "portproxy", "delete", "v4tov4",
-		"listenaddress=0.0.0.0", "listenport=2375").Run()
+	delCmd := exec.Command("netsh", "interface", "portproxy", "delete", "v4tov4",
+		"listenaddress=0.0.0.0", "listenport=2375")
+	hideWindow(delCmd)
+	delCmd.Run()
 
 	addCmd := exec.Command("netsh", "interface", "portproxy", "add", "v4tov4",
 		"listenaddress=0.0.0.0", "listenport=2375",
 		"connectaddress="+wslIP, "connectport=2375")
+	hideWindow(addCmd)
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		fmt.Printf("  [!] portproxy add failed: %v\n%s\n", err, strings.TrimSpace(string(out)))
 		return
@@ -142,10 +149,12 @@ func ensurePortproxy(distro string) {
 func getWSLIP(distro string) string {
 	cmd := exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
 		"ip -4 -br addr show eth0 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | head -1")
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
 		cmd2 := exec.Command("wsl", "--exec", "sh", "-c",
 			"ip -4 -br addr show eth0 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | head -1")
+		hideWindow(cmd2)
 		out2, err2 := cmd2.Output()
 		if err2 != nil || len(out2) == 0 {
 			return ""

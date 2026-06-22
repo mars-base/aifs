@@ -121,7 +121,9 @@ func (m *BackupManager) EnsureSSHKey() (*SSHKeyPair, error) {
 	// Check if key already exists (on Windows check WSL side).
 	if runtime.GOOS == "windows" {
 		wslPriv := wslNativePath(keys.Private)
-		if _, err := exec.Command("wsl", "-d", wslDistro(), "--exec", "test", "-f", wslPriv).Output(); err == nil {
+		testCmd := exec.Command("wsl", "-d", wslDistro(), "--exec", "test", "-f", wslPriv)
+		hideWindow(testCmd)
+		if _, err := testCmd.Output(); err == nil {
 			return &keys, nil
 		}
 	} else if _, err := os.Stat(keys.Private); err == nil {
@@ -491,6 +493,7 @@ func (m *BackupManager) BackupExec(tailLogs bool, args ...string) (string, error
 func (m *BackupManager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -504,6 +507,7 @@ func (m *BackupManager) run(args ...string) (string, error) {
 func (m *BackupManager) runInteractive(args ...string) error {
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
+	hideWindow(cmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

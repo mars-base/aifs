@@ -18,6 +18,7 @@ import (
 func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Duration) (string, error) {
 	slog.Debug("execWithTimeoutStreaming", "args", args)
 	cmd := exec.Command(podmanPath, args...)
+	hideWindow(cmd)
 
 	var stdoutBuf, stderrBuf strings.Builder
 	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
@@ -63,6 +64,7 @@ func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Dur
 func execWithTimeout(podmanPath string, args []string, timeout time.Duration) (string, error) {
 	slog.Debug("execWithTimeout", "args", args)
 	cmd := exec.Command(podmanPath, args...)
+	hideWindow(cmd)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

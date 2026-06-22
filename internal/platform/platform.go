@@ -252,6 +252,7 @@ func GetUsedPorts() map[int]bool {
 	default:
 		return nil
 	}
+	hideConsoleWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil // can't probe, fall back to sequential assignment
@@ -269,8 +270,19 @@ func GetUsedPorts() map[int]bool {
 
 // --- Internal helpers ---
 
+// hideConsoleWindow prevents cmd from popping up a console window on Windows.
+// On a detached process (e.g. background aifs mount) every child wsl/podman/netsh
+// would otherwise flash its own console window. No-op on Linux/macOS.
+func hideConsoleWindow(cmd *exec.Cmd) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	hideConsoleWindowWindows(cmd)
+}
+
 func runCmd(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
+	hideConsoleWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

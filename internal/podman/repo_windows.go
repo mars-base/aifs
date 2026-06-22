@@ -23,6 +23,7 @@ func (m *BackupManager) EnsureRepoReadable() error {
 
 	distro := wslDistro()
 	cmd := exec.Command("wsl", "-d", distro, "--exec", "chmod", "-R", "a+rX", wslPath)
+	hideWindow(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("chmod backup repo %s (wsl): %w (output: %s)", wslPath, err, string(out))
 	}
