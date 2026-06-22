@@ -1,5 +1,5 @@
-// Package object provides a PostgreSQL-backed blob store extracted from
-// JuiceFS's pkg/object/sql.go. It stores opaque blobs in a single table
+// Package object provides a PostgreSQL-backed blob store
+// It stores opaque blobs in a single table
 // using upsert semantics.
 package object
 

@@ -21,7 +21,7 @@ const (
 // RootIno is the inode number of the filesystem root.
 const RootIno uint64 = 1
 
-// DefaultChunkSize matches JuiceFS's default block size.
+// DefaultChunkSize matches default block size.
 const DefaultChunkSize int = 4 << 20
 
 // FormatInfo is stored in the setting table under name="format".

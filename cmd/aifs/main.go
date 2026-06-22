@@ -1,4 +1,4 @@
-// aifs - AI-native filesystem with PITR powered by JuiceFS + PostgreSQL.
+// aifs - AI-native filesystem with PITR powered by PostgreSQL.
 //
 // // Single Go binary CLI tool, cross-platform (Linux/macOS/Windows).
 // Uses Podman to manage PostgreSQL + pgBackRest container, leveraging PITR for filesystem time travel.
