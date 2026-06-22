@@ -52,13 +52,13 @@ If the script reports a reboot is required, restart the machine and then **run t
 Linux / macOS:
 
 ```bash
-curl -fsSL https://github.com/mars-base/aifs/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/mars-base/aifs/main/scripts/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://github.com/mars-base/aifs/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/install.ps1 | iex
 ```
 
 ## Quick Start

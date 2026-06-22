@@ -1,25 +1,24 @@
 # aifs one-line installer for Windows
 # Detects and guides installation of all required dependencies:
 #   WinFsp (FUSE filesystem), Podman
-param([switch]$NoPrompt)
 
 $ErrorActionPreference = "Stop"
 $repo = "mars-base/aifs"
 $installDir = "$env:LOCALAPPDATA\aifs"
 
-# ─── Helper functions ───────────────────────────────────────────────
+# --- Helper functions -----------------------------------------------
 
 function Write-Step([string]$msg) {
-    Write-Host ""; Write-Host "→ $msg" -ForegroundColor Cyan
+    Write-Host ""; Write-Host ">> $msg" -ForegroundColor Cyan
 }
 function Write-Ok([string]$msg) {
-    Write-Host "  ✓ $msg" -ForegroundColor Green
+    Write-Host "  OK $msg" -ForegroundColor Green
 }
 function Write-Warn([string]$msg) {
-    Write-Host "  ⚠ $msg" -ForegroundColor Yellow
+    Write-Host "  ! $msg" -ForegroundColor Yellow
 }
 function Write-Fail([string]$msg) {
-    Write-Host "  ✗ $msg" -ForegroundColor Red
+    Write-Host "  X $msg" -ForegroundColor Red
 }
 function Write-Info([string]$msg) {
     Write-Host "  $msg" -ForegroundColor Gray
@@ -28,7 +27,7 @@ function Write-Hint([string]$msg) {
     Write-Host "  Run: $msg" -ForegroundColor Gray
 }
 
-# ─── Dependency probes (no side effects) ────────────────────────────
+# --- Dependency probes (no side effects) ----------------------------
 
 function Test-Podman {
     return (Get-Command podman -ErrorAction SilentlyContinue) -ne $null
@@ -46,7 +45,7 @@ function Test-WinFsp {
     return $false
 }
 
-# ─── Phase 1: Binary download ──────────────────────────────────────
+# --- Phase 1: Binary download --------------------------------------
 
 Write-Step "Downloading aifs binary..."
 
@@ -75,7 +74,7 @@ if ($currentPath -notlike "*$installDir*") {
 
 Write-Ok "aifs $tag installed to $target"
 
-# ─── Phase 2: Dependency checks & guided install ────────────────────
+# --- Phase 2: Dependency checks & guided install --------------------
 
 Write-Step "Checking Windows dependencies..."
 
@@ -83,7 +82,7 @@ Write-Step "Checking Windows dependencies..."
 if (Test-WinFsp) {
     Write-Ok "WinFsp found"
 } else {
-    Write-Warn "WinFsp not found — required for FUSE filesystem mount"
+    Write-Warn "WinFsp not found -- required for FUSE filesystem mount"
     Write-Hint "winget install WinFsp.WinFsp"
     Write-Info "  Or download from: https://winfsp.dev/"
     Write-Info "  After installing WinFsp, reboot or start the service:"
@@ -97,7 +96,7 @@ if (Test-Podman) {
     $podmanVer = (podman --version 2>&1) -join ' '
     Write-Ok "Podman found ($podmanVer)"
 } else {
-    Write-Warn "Podman not found — installing via winget..."
+    Write-Warn "Podman not found -- installing via winget..."
     winget install RedHat.Podman --accept-source-agreements --accept-package-agreements
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "winget install failed."
@@ -107,15 +106,15 @@ if (Test-Podman) {
         Write-Fail "Please install Podman and ensure it is on your PATH, then re-run this script."
         exit 1
     }
-    Write-Ok "Podman installed — you may need to restart your shell"
+    Write-Ok "Podman installed -- you may need to restart your shell"
     Write-Info "  Podman on Windows uses WSL2. If not already set up, run:"
     Write-Hint "wsl --install"
 }
 
-# ─── Phase 3: Post-install notes ────────────────────────────────────
+# --- Phase 3: Post-install notes ------------------------------------
 
 Write-Host ""
-Write-Host "✓ aifs installation complete" -ForegroundColor Green
+Write-Host "OK aifs installation complete" -ForegroundColor Green
 Write-Host ""
 Write-Host "Quick start:"
 Write-Host "  aifs version"
