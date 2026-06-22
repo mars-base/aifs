@@ -1,4 +1,4 @@
-﻿# aifs-setup.ps1 — Check virtualization, install WSL2 + podman CLI for aifs on Windows
+# aifs-setup.ps1 -- Check virtualization, install WSL2 + podman CLI for aifs on Windows
 # Usage: powershell -ExecutionPolicy Bypass -File aifs-setup.ps1 [-Proxy <url>|none]
 #
 # Steps:
@@ -13,10 +13,20 @@
 #
 # Download from: http://10.241.21.97:1357/aifs-setup.ps1
 
-[CmdletBinding()]
-param(
-    [string]$Proxy = ""
-)
+# Accept proxy via:
+#   - powershell -File aifs-setup.ps1 -Proxy <url>     (parsed from $args)
+#   - $env:AI_FS_PROXY = "<url>" then irm ... | iex    (for the pipe form)
+#   - reuses $env:HTTPS_PROXY if already set
+# "none" disables proxy explicitly.
+$Proxy = ""
+if ($env:AI_FS_PROXY) { $Proxy = $env:AI_FS_PROXY }
+if (-not $Proxy -and $env:HTTPS_PROXY) { $Proxy = $env:HTTPS_PROXY }
+# Parse -Proxy <url> from $args (works under `powershell -File ... -Proxy ...`)
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ("$($args[$i])" -ieq "-Proxy" -and ($i + 1) -lt $args.Count) {
+        $Proxy = "$($args[$i + 1])"; $i++
+    }
+}
 
 $useProxy = ($Proxy -and ($Proxy -ne "none"))
 
@@ -29,10 +39,10 @@ Write-Host "========================================"
 Write-Host ""
 Write-Host "Note: enabling WSL2 may require a reboot. If the script says"
 Write-Host "'REBOOT REQUIRED', restart the machine and re-run the SAME"
-Write-Host "command — it will resume from where it left off."
+Write-Host "command -- it will resume from where it left off."
 Write-Host ""
 
-# ─── Helper: read one CPU property via CIM ──────────────
+# --- Helper: read one CPU property via CIM --------------
 # Note: Win11 24H2 / LTSC 2024 removed wmic.exe by default, so we use
 # Get-CimInstance Win32_Processor (the modern WMI replacement) instead.
 # CIM returns booleans as "True"/"False" (title case), unlike wmic's
@@ -54,7 +64,7 @@ function ReadWmic {
     return "$val".Trim()
 }
 
-# ─── Helper: check if an exe exists ─────────────────────
+# --- Helper: check if an exe exists ---------------------
 
 function CmdExists {
     param([string]$name)
@@ -77,7 +87,7 @@ function CmdExists {
     return ($null -ne $found)
 }
 
-# ─── Helper: refresh PATH in current session ────────────
+# --- Helper: refresh PATH in current session ------------
 
 function Refresh-Path {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -85,7 +95,7 @@ function Refresh-Path {
     $env:Path    = "$machinePath;$userPath"
 }
 
-# ─── Helper: print step result ──────────────────────────
+# --- Helper: print step result --------------------------
 
 function Print-Result {
     param([string]$label, [string]$status, [string]$detail)
@@ -97,11 +107,11 @@ function Print-Result {
     if ($detail) { Write-Host "         $detail" }
 }
 
-# ─── Helper: pause for a keypress in interactive sessions ───
+# --- Helper: pause for a keypress in interactive sessions ---
 # In an interactive console (e.g. `irm | iex` run by a human), wait for a
 # keypress so the user can read the message before the window closes. In a
 # non-interactive context (WinRM, scheduled task S4U, CI), return immediately
-# — blocking on Read-Host there would hang forever.
+# -- blocking on Read-Host there would hang forever.
 function Pause-IfInteractive {
     param([string]$prompt = "Press any key to continue...")
     $interactive = $false
@@ -115,7 +125,7 @@ function Pause-IfInteractive {
     Write-Host ""
 }
 
-# ─── Helper: invoke wsl.exe safely ──────────────────────
+# --- Helper: invoke wsl.exe safely ----------------------
 # Start-Process -FilePath "wsl.exe" can throw a terminating
 # InvalidOperationException ("system cannot find the file specified") when the
 # inbox wsl.exe stub is present but not resolvable in the current context
@@ -140,9 +150,9 @@ function Invoke-Wsl {
     }
 }
 
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 # PHASE 1: Check CPU virtualization
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 
 Write-Host "[Phase 1] Checking CPU virtualization..."
 Write-Host "-----------------------------------"
@@ -196,9 +206,9 @@ if ($cpuOk) {
 }
 Write-Host ""
 
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 # PHASE 2: Install WSL2
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 
 Write-Host "[Phase 2] WSL2 setup"
 Write-Host "-----------------------------------"
@@ -270,14 +280,14 @@ if (-not $wslWorking) {
         Write-Host ""
         Write-Host "  ============================================================"
         Write-Host "    REBOOT REQUIRED to activate WSL features (dism: 3010)"
-        Write-Host "    This is normal — not an error."
+        Write-Host "    This is normal -- not an error."
         Write-Host ""
         Write-Host "    Next steps:"
         Write-Host "      1. Restart this machine."
         Write-Host "      2. Re-run the SAME install command you just ran."
         Write-Host "         The script will resume from where it left off."
         Write-Host "  ============================================================"
-        Print-Result "Reboot required" "warn" "dism returned 3010 — reboot then re-run"
+        Print-Result "Reboot required" "warn" "dism returned 3010 -- reboot then re-run"
         # A required reboot is a normal setup step, not a failure: exit 0 (not 1)
         # so `irm | iex` does not abort with an error. Pause in an interactive
         # session so the user can read this before the window closes; in
@@ -294,7 +304,7 @@ if (-not $wslWorking) {
     if ($wslInstallRc -eq 0) {
         Print-Result "wsl --install --no-distribution" "ok"
     } elseif ($null -eq $wslInstallRc) {
-        Print-Result "wsl --install" "warn" "wsl.exe could not be launched (stub not active yet?) — retry after reboot"
+        Print-Result "wsl --install" "warn" "wsl.exe could not be launched (stub not active yet?) -- retry after reboot"
     } else {
         Print-Result "wsl --install" "warn" "Exit code: $wslInstallRc (may be ok after reboot)"
     }
@@ -309,18 +319,18 @@ if (CmdExists "wsl") {
     if ($setDefaultRc -eq 0) {
         Print-Result "WSL default version 2" "ok"
     } elseif ($null -eq $setDefaultRc) {
-        Print-Result "WSL set-default-version" "warn" "wsl.exe not launchable — retry after reboot"
+        Print-Result "WSL set-default-version" "warn" "wsl.exe not launchable -- retry after reboot"
     } else {
-        Print-Result "WSL set-default-version" "warn" "Exit code: $setDefaultRc — reboot may be needed"
+        Print-Result "WSL set-default-version" "warn" "Exit code: $setDefaultRc -- reboot may be needed"
     }
 
     $updateKernelRc = Invoke-Wsl -WslArgs "--update"
     if ($updateKernelRc -eq 0) {
         Print-Result "WSL kernel updated" "ok"
     } elseif ($null -eq $updateKernelRc) {
-        Print-Result "WSL update" "warn" "wsl.exe not launchable — retry after reboot"
+        Print-Result "WSL update" "warn" "wsl.exe not launchable -- retry after reboot"
     } else {
-        Print-Result "WSL update" "warn" "Exit code: $updateKernelRc — reboot may be needed"
+        Print-Result "WSL update" "warn" "Exit code: $updateKernelRc -- reboot may be needed"
         Write-Host ""
         Write-Host "  If podman machine init later fails with a WSL2 kernel error,"
         Write-Host "  manually download and install the WSL2 Linux kernel update package:"
@@ -333,9 +343,9 @@ if (CmdExists "wsl") {
 }
 Write-Host ""
 
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 # PHASE 3: Install Podman
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 
 Write-Host "[Phase 3] Podman setup"
 Write-Host "-----------------------------------"
@@ -482,9 +492,9 @@ function WinFspInstalled {
     return $false
 }
 
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 # PHASE 4: Install WinFsp (runtime dependency for aifs mount)
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 
 Write-Host "[Phase 4] WinFsp (FUSE runtime)"
 Write-Host "-----------------------------------"
@@ -592,9 +602,9 @@ if (WinFspInstalled) {
 }
 Write-Host ""
 
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 # PHASE 5: Verify podman CLI (no podman machine needed)
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 
 Write-Host "[Phase 5] Podman CLI verification"
 Write-Host "-----------------------------------"
@@ -617,9 +627,9 @@ Write-Host "        and set CONTAINER_HOST=tcp://localhost:2375 automatically."
 Write-Host ""
 Write-Host ""
 
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 # Summary
-# ═══════════════════════════════════════════════════════════
+# ===========================================================
 
 Write-Host "========================================"
 Write-Host "  Setup Complete"
