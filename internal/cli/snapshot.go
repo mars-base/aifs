@@ -68,13 +68,13 @@ Backup types:
 
 		pt := pitr.New(cfg, pm, bm)
 
-		fmt.Println("→ Note: database backups may take a long time, do not interrupt the task")
+		fmt.Println("-> Note: database backups may take a long time, do not interrupt the task")
 		snap, err := pt.CreateSnapshot(snapType, snapTailLogs)
 		if err != nil {
 			return err
 		}
 
-		fmt.Printf("\n✓ Snapshot created successfully\n")
+		fmt.Printf("\nOK Snapshot created successfully\n")
 		fmt.Printf("  Name: %s\n", snap.Name)
 		fmt.Printf("  Type: %s\n", snap.Type)
 		fmt.Printf("  Time: %s\n", snap.Timestamp.Format("2006-01-02 15:04:05"))
@@ -153,7 +153,7 @@ var snapshotDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("✓ Snapshot deleted")
+		fmt.Println("[OK] Snapshot deleted")
 		return nil
 	},
 }

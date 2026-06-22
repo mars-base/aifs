@@ -36,15 +36,15 @@ Steps:
 		fmt.Printf("Platform: %s\n", platform.Detect())
 
 		// 1. Check dependencies
-		fmt.Println("\n→ Checking dependencies...")
+		fmt.Println("\n-> Checking dependencies...")
 		missing := platform.MissingPrereqs()
 		if len(missing) > 0 {
 			for _, d := range missing {
-				fmt.Printf("  ✗ %s: %s\n", d.Name, d.Hint)
+				fmt.Printf("  [X] %s: %s\n", d.Name, d.Hint)
 			}
 			return fmt.Errorf("missing dependencies, please install them first")
 		}
-		fmt.Println("  ✓ podman available")
+		fmt.Println("  [OK] podman available")
 
 		// 2. Initialize podman manager
 		pm, err := newPodman()
@@ -78,7 +78,7 @@ Steps:
 		}
 
 		// Wait for PostgreSQL to finish initialization (initdb + init scripts).
-		fmt.Println("→ Waiting for PostgreSQL to be ready...")
+		fmt.Println("-> Waiting for PostgreSQL to be ready...")
 		for i := 0; i < 60; i++ {
 			if ready, _ := pm.PGIsReady(); ready {
 				break
@@ -99,23 +99,23 @@ Steps:
 			}
 
 			// Install backup public key into the PG container so pgbackrest can SSH in.
-			fmt.Println("→ Authorizing backup key on PostgreSQL container...")
+			fmt.Println("-> Authorizing backup key on PostgreSQL container...")
 			if err := bm.AuthorizeKeyOnInstance(); err != nil {
 				return fmt.Errorf("authorizing backup key: %w", err)
 			}
 
 			// Ensure backup infrastructure is ready
-			fmt.Println("→ Ensuring backup infrastructure is ready...")
+			fmt.Println("-> Ensuring backup infrastructure is ready...")
 			if err := bm.EnsureBackupInfra(); err != nil {
 				return fmt.Errorf("backup infrastructure: %w", err)
 			}
 
 			pt := pitr.New(cfg, pm, bm)
 			if err := pt.EnsureStanza(); err != nil {
-				fmt.Printf("  ⚠ stanza create warning: %v\n", err)
+				fmt.Printf("  [!] stanza create warning: %v\n", err)
 			}
 			if err := pt.CheckStanza(); err != nil {
-				fmt.Printf("  ⚠ stanza check warning: %v\n", err)
+				fmt.Printf("  [!] stanza check warning: %v\n", err)
 			}
 
 			// init.sh set archive_mode=on but did NOT set archive_command during
@@ -127,9 +127,9 @@ Steps:
 			setSQL := fmt.Sprintf("ALTER SYSTEM SET archive_command TO '%s'", archiveCmd)
 
 			if _, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", setSQL); err != nil {
-				fmt.Printf("  ⚠ setting archive_command: %v\n", err)
+				fmt.Printf("  [!] setting archive_command: %v\n", err)
 			} else {
-				fmt.Println("→ archive_command configured")
+				fmt.Println("-> archive_command configured")
 			}
 
 			// Reload to make the archiver pick up the new command, then
@@ -137,13 +137,13 @@ Steps:
 			pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_reload_conf()")
 			pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_switch_wal()")
 
-			fmt.Println("→ Waiting for WAL archiver to catch up...")
+			fmt.Println("-> Waiting for WAL archiver to catch up...")
 			for i := 0; i < 30; i++ {
 				time.Sleep(2 * time.Second)
 				out, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-t", "-c",
 					"SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') AS f WHERE f LIKE '%.ready'")
 				if err == nil && strings.TrimSpace(out) == "0" {
-					fmt.Println("  ✓ WAL archiver caught up")
+					fmt.Println("  [OK] WAL archiver caught up")
 					break
 				}
 			}
@@ -151,10 +151,10 @@ Steps:
 
 		// Persist auto-assigned ports so subsequent starts don't re-allocate.
 		if err := saveConfig(); err != nil {
-			fmt.Printf("  ⚠ failed to save config: %v\n", err)
+			fmt.Printf("  [!] failed to save config: %v\n", err)
 		}
 
-		fmt.Println("\n✓ started")
+		fmt.Println("\nOK started")
 		fmt.Printf("  PostgreSQL: postgres://%s:%s@localhost:%d/%s\n",
 			cfg.Postgres.User, cfg.Postgres.Password,
 			cfg.Postgres.Port, cfg.Postgres.Database)

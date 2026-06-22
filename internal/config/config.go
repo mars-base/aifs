@@ -245,7 +245,7 @@ func Load(path string) (*Config, error) {
 }
 
 // displayConfig is the serializable subset of Config for save/display.
-// Global postgres/podman/pitr are excluded — they are in-memory defaults only.
+// Global postgres/podman/pitr are excluded -- they are in-memory defaults only.
 type displayConfig struct {
 	BaseDir    string                    `yaml:"base_dir,omitempty"`
 	Network    string                    `yaml:"network,omitempty"`
@@ -445,7 +445,7 @@ func (c *Config) ApplyDefaults() {
 
 // autoAssignPorts assigns sequential host ports (PG + SSH) to instances that
 // have HostPort=0 / SSHPort=0. PG ports start at 25432, SSH ports start at
-// 32201 (host networking — each instance needs a unique port on the shared
+// 32201 (host networking -- each instance needs a unique port on the shared
 // host network stack).
 //
 // Instances are processed in alphabetical order by name. Explicitly-set ports

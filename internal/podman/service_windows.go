@@ -52,7 +52,7 @@ func startPodmanService() {
 		return
 	}
 
-	fmt.Println("→ Starting WSL podman service...")
+	fmt.Println("-> Starting WSL podman service...")
 
 	// Clean stale boot-ID cache from a previous WSL session.
 	exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
@@ -61,7 +61,7 @@ func startPodmanService() {
 	// Launch podman system service via cmd /c start "" /B.
 	//
 	// Go's exec.Cmd.Start puts the child into Go's own Windows Job Object,
-	// which is torn down when aifs exits — killing wsl.exe and shutting down
+	// which is torn down when aifs exits -- killing wsl.exe and shutting down
 	// the WSL VM.  cmd /c start uses ShellExecuteEx internally, which creates
 	// the process outside of Go's job, so wsl.exe survives aifs exit.
 	//
@@ -93,7 +93,7 @@ func startPodmanService() {
 	for i := 0; i < 30; i++ {
 		if tcpServiceListening(distro) {
 			ensurePortproxy(distro)
-			fmt.Println("  ✓ podman service ready")
+			fmt.Println("  [OK] podman service ready")
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -132,10 +132,10 @@ func ensurePortproxy(distro string) {
 		"listenaddress=0.0.0.0", "listenport=2375",
 		"connectaddress="+wslIP, "connectport=2375")
 	if out, err := addCmd.CombinedOutput(); err != nil {
-		fmt.Printf("  ⚠ portproxy add failed: %v\n%s\n", err, strings.TrimSpace(string(out)))
+		fmt.Printf("  [!] portproxy add failed: %v\n%s\n", err, strings.TrimSpace(string(out)))
 		return
 	}
-	fmt.Printf("  ✓ portproxy: 0.0.0.0:2375 → %s:2375\n", wslIP)
+	fmt.Printf("  [OK] portproxy: 0.0.0.0:2375 -> %s:2375\n", wslIP)
 }
 
 // getWSLIP returns the IPv4 address of the WSL distro's eth0 interface.

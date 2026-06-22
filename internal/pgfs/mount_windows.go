@@ -47,7 +47,7 @@ func getUserObjectInformation(h windows.Handle, nIndex int, pvInfo unsafe.Pointe
 
 // NormalizeMountPoint ensures a Windows drive-letter mount point has a
 // trailing backslash so that filepath.Join produces correct paths.
-// "Z:" → "Z:\", "Z:\" → "Z:\", "C:\dir" → "C:\dir".
+// "Z:" -> "Z:\", "Z:\" -> "Z:\", "C:\dir" -> "C:\dir".
 func NormalizeMountPoint(mountPoint string) string {
 	vol := filepath.VolumeName(mountPoint)
 	if vol != "" && len(mountPoint) == len(vol) {
@@ -57,7 +57,7 @@ func NormalizeMountPoint(mountPoint string) string {
 }
 
 // MountPathJoin is like filepath.Join(mountPoint, name) but handles bare
-// Windows drive letters correctly (Z: + .aifs-mounted → Z:\.aifs-mounted).
+// Windows drive letters correctly (Z: + .aifs-mounted -> Z:\.aifs-mounted).
 func MountPathJoin(mountPoint, name string) string {
 	return filepath.Join(NormalizeMountPoint(mountPoint), name)
 }

@@ -23,12 +23,12 @@ var stopCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("→ Stopping aifs services...")
+		fmt.Println("-> Stopping aifs services...")
 		if err := pm.StopContainer(); err != nil {
 			return err
 		}
 
-		fmt.Println("✓ aifs stopped")
+		fmt.Println("[OK] aifs stopped")
 		return nil
 	},
 }

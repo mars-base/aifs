@@ -28,7 +28,7 @@ var backupCmd = &cobra.Command{
 	Short: "Manage the shared pgbackrest backup container",
 	Long: `backup manages a shared pgbackrest container that handles backups for all instances.
 
-The backup container is shared across all database instances — each instance
+The backup container is shared across all database instances -- each instance
 gets its own pgbackrest stanza, but they all share a single pgbackrest repository.
 
 Subcommands:
@@ -48,7 +48,7 @@ func loadRawConfig() (*config.Config, error) {
 	return config.Load(path)
 }
 
-// ─── backup setup ───────────────────────────────────────────────
+// --- backup setup -----------------------------------------------
 
 var backupSetupCmd = &cobra.Command{
 	Use:   "setup",
@@ -83,10 +83,10 @@ The backup container is shared across all database instances.`,
 
 		fmt.Println("=== aifs backup setup ===")
 
-		// ── Pre-flight checks ──────────────────────────────────
+		// -- Pre-flight checks ----------------------------------
 
-		// 1. Ensure shared network (PG ↔ backup containers communicate via bridge)
-		fmt.Println("\n→ Ensuring shared network...")
+		// 1. Ensure shared network (PG <-> backup containers communicate via bridge)
+		fmt.Println("\n-> Ensuring shared network...")
 		if err := bm.EnsureNetwork(); err != nil {
 			return err
 		}
@@ -118,36 +118,36 @@ The backup container is shared across all database instances.`,
 			}
 		}
 		if pitrCount == 0 {
-			fmt.Println("\n⚠️  No instances with PITR enabled — backup container will have no stanzas")
+			fmt.Println("\n!  No instances with PITR enabled -- backup container will have no stanzas")
 		}
 
 		// 1. Build backup image
-		fmt.Println("\n→ Step 1/4: Building backup image...")
+		fmt.Println("\n-> Step 1/4: Building backup image...")
 		if err := bm.EnsureBackupImage(); err != nil {
 			return err
 		}
 
 		// 2. Create directories
-		fmt.Println("\n→ Step 2/4: Creating backup directories...")
+		fmt.Println("\n-> Step 2/4: Creating backup directories...")
 		if err := bm.EnsureBackupDirs(); err != nil {
 			return err
 		}
 
 		// 3. Generate pgbackrest.conf
-		fmt.Println("\n→ Step 3/4: Generating pgbackrest.conf...")
+		fmt.Println("\n-> Step 3/4: Generating pgbackrest.conf...")
 		confPath, err := bm.WritePgbackrestConf()
 		if err != nil {
 			return err
 		}
 
 		// 4. Create and start backup container
-		fmt.Println("\n→ Step 4/4: Starting backup container...")
+		fmt.Println("\n-> Step 4/4: Starting backup container...")
 
 		if err := bm.EnsureBackupContainer(confPath); err != nil {
 			return err
 		}
 
-		fmt.Println("\n✓ backup setup complete!")
+		fmt.Println("\nOK backup setup complete!")
 		fmt.Printf("  Container: %s\n", cfg.Backup.ContainerName)
 		fmt.Printf("  Image:     %s\n", cfg.Backup.ImageTag)
 		fmt.Printf("  Config:    %s\n", confPath)
@@ -156,7 +156,7 @@ The backup container is shared across all database instances.`,
 	},
 }
 
-// ─── backup start ────────────────────────────────────────────────
+// --- backup start ------------------------------------------------
 
 var backupStartCmd = &cobra.Command{
 	Use:   "start",
@@ -172,16 +172,16 @@ var backupStartCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("→ Starting backup container %s...\n", cfg.Backup.ContainerName)
+		fmt.Printf("-> Starting backup container %s...\n", cfg.Backup.ContainerName)
 		if err := bm.StartBackupContainer(); err != nil {
 			return err
 		}
-		fmt.Println("✓ Backup container started")
+		fmt.Println("[OK] Backup container started")
 		return nil
 	},
 }
 
-// ─── backup stop ─────────────────────────────────────────────────
+// --- backup stop -------------------------------------------------
 
 var backupStopCmd = &cobra.Command{
 	Use:   "stop",
@@ -197,16 +197,16 @@ var backupStopCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("→ Stopping backup container %s...\n", cfg.Backup.ContainerName)
+		fmt.Printf("-> Stopping backup container %s...\n", cfg.Backup.ContainerName)
 		if err := bm.StopBackupContainer(); err != nil {
 			return err
 		}
-		fmt.Println("✓ Backup container stopped")
+		fmt.Println("[OK] Backup container stopped")
 		return nil
 	},
 }
 
-// ─── backup status ───────────────────────────────────────────────
+// --- backup status -----------------------------------------------
 
 var backupStatusCmd = &cobra.Command{
 	Use:   "status",

@@ -52,7 +52,7 @@ This is analogous to 'mkfs' for the aifs PG-backed filesystem.`,
 			return err
 		}
 
-		fmt.Println("→ Waiting for PostgreSQL to be ready...")
+		fmt.Println("-> Waiting for PostgreSQL to be ready...")
 		for i := 0; i < 60; i++ {
 			if ready, _ := pm.PGIsReady(); ready {
 				break
@@ -70,7 +70,7 @@ This is analogous to 'mkfs' for the aifs PG-backed filesystem.`,
 			return fmt.Errorf("format failed: %w", err)
 		}
 
-		fmt.Println("✓ formatted PG-backed filesystem")
+		fmt.Println("[OK] formatted PG-backed filesystem")
 		fmt.Printf("  instance: %s\n", cfg.Instance)
 		fmt.Printf("  volume:   %s\n", info.VolumeName)
 		fmt.Printf("  prefix:   %s\n", fsCfg.TablePrefix)
@@ -110,7 +110,7 @@ onto a local directory. By default it runs in the foreground.`,
 			return err
 		}
 
-		fmt.Println("→ Waiting for PostgreSQL to be ready...")
+		fmt.Println("-> Waiting for PostgreSQL to be ready...")
 		for i := 0; i < 60; i++ {
 			if ready, _ := pm.PGIsReady(); ready {
 				break

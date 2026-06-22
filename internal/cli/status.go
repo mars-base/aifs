@@ -49,10 +49,10 @@ var statusCmd = &cobra.Command{
 		if cs.Running {
 			ready, _ := pm.PGIsReady()
 			if ready {
-				fmt.Println("\nPostgreSQL: ✓ accepting connections")
+				fmt.Println("\nPostgreSQL: [OK] accepting connections")
 				fmt.Printf("  Connection: %s\n", cfg.GetPostgresURL())
 			} else {
-				fmt.Println("\nPostgreSQL: ✗ not accepting connections")
+				fmt.Println("\nPostgreSQL: [X] not accepting connections")
 			}
 		}
 

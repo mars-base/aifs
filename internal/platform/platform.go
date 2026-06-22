@@ -130,7 +130,7 @@ func CheckFUSE() DepStatus {
 }
 
 func checkMacFUSE() DepStatus {
-	// Prefer checking the kext — if loaded, everything works.
+	// Prefer checking the kext -- if loaded, everything works.
 	if out, err := runCmd("kextstat"); err == nil {
 		if strings.Contains(out, "macfuse") {
 			return DepStatus{Name: "macfuse", Found: true}
@@ -141,13 +141,13 @@ func checkMacFUSE() DepStatus {
 		return DepStatus{
 			Name:  "macfuse",
 			Found: false,
-			Hint:  "macFUSE is installed but the kernel extension is not loaded. Run: sudo kextutil /Library/Filesystems/macfuse.fs (may require reboot after approving in System Settings → Privacy & Security)",
+			Hint:  "macFUSE is installed but the kernel extension is not loaded. Run: sudo kextutil /Library/Filesystems/macfuse.fs (may require reboot after approving in System Settings -> Privacy & Security)",
 		}
 	}
 	return DepStatus{
 		Name:  "macfuse",
 		Found: false,
-		Hint:  "Install macFUSE: brew install --cask macfuse, then approve in System Settings → Privacy & Security and reboot",
+		Hint:  "Install macFUSE: brew install --cask macfuse, then approve in System Settings -> Privacy & Security and reboot",
 	}
 }
 
@@ -225,7 +225,7 @@ func DefaultConfigPath() string {
 }
 
 // GetUsedPorts returns the set of TCP ports currently listening on the container
-// host. On macOS we use bridge networking — containers have their own IPs on the
+// host. On macOS we use bridge networking -- containers have their own IPs on the
 // bridge, but published ports are still visible inside the VM via podman proxy.
 // We probe to avoid port collisions.
 //

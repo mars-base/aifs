@@ -69,11 +69,11 @@ Examples:
 		}
 
 		if !destroyForce {
-			fmt.Printf("⚠️  This will destroy instance %q:\n", cfgInstance)
+			fmt.Printf("!  This will destroy instance %q:\n", cfgInstance)
 			fmt.Printf("  - Stop and remove container: %s\n", inst.Podman.ContainerName)
 			fmt.Printf("  - Remove config entry\n")
 			if destroyCleanData {
-				fmt.Printf("\n  ⚠️  Host data will be PERMANENTLY deleted:\n")
+				fmt.Printf("\n  [!]  Host data will be PERMANENTLY deleted:\n")
 				fmt.Printf("    data:       %s\n", inst.Podman.DataDir)
 				if inst.PITR.Enabled {
 					fmt.Printf("    backup:     %s/backup/%s\n", cfg.Backup.DataDir, inst.PITR.PgBackRestStanza)
@@ -94,9 +94,9 @@ Examples:
 		}
 
 		// 1. Destroy container (and data if requested)
-		fmt.Printf("→ Stopping and removing container %s...\n", inst.Podman.ContainerName)
+		fmt.Printf("-> Stopping and removing container %s...\n", inst.Podman.ContainerName)
 		if err := pm.DestroyWithData(destroyCleanData); err != nil {
-			fmt.Printf("  ⚠️  Warning: failed to destroy container: %v\n", err)
+			fmt.Printf("  [!]  Warning: failed to destroy container: %v\n", err)
 		}
 
 		// 2. Remove config entry
@@ -109,13 +109,13 @@ Examples:
 		if cfg.PITR.Enabled {
 			bm, err := podman.NewBackupManager(cfg)
 			if err != nil {
-				fmt.Printf("  ⚠️  Warning: cannot rebuild backup container: %v\n", err)
+				fmt.Printf("  [!]  Warning: cannot rebuild backup container: %v\n", err)
 			} else if err := bm.EnsureBackupInfra(); err != nil {
-				fmt.Printf("  ⚠️  Warning: failed to update backup container: %v\n", err)
+				fmt.Printf("  [!]  Warning: failed to update backup container: %v\n", err)
 			}
 		}
 
-		fmt.Printf("✓ instance %q destroyed\n", cfgInstance)
+		fmt.Printf("[OK] instance %q destroyed\n", cfgInstance)
 		return nil
 	},
 }

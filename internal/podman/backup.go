@@ -67,7 +67,7 @@ func (m *BackupManager) SSHConfigPath() string {
 }
 
 // WriteSSHConfig writes an SSH client config that disables host key checking
-// for PG containers. All platforms use host networking — per-instance Host
+// for PG containers. All platforms use host networking -- per-instance Host
 // aliases map container names to 127.0.0.1 with unique SSH ports.
 func (m *BackupManager) WriteSSHConfig() (string, error) {
 	// Per-instance Host aliases: each PG container name maps to
@@ -128,7 +128,7 @@ func (m *BackupManager) EnsureSSHKey() (*SSHKeyPair, error) {
 		return &keys, nil
 	}
 
-	fmt.Println("→ Generating backup container SSH key pair...")
+	fmt.Println("-> Generating backup container SSH key pair...")
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("generating rsa key: %w", err)
@@ -171,7 +171,7 @@ func (m *BackupManager) EnsureSSHKey() (*SSHKeyPair, error) {
 		}
 	}
 
-	fmt.Println("  ✓ SSH key pair generated")
+	fmt.Println("  [OK] SSH key pair generated")
 	return &keys, nil
 }
 
@@ -213,7 +213,7 @@ func (m *BackupManager) AuthorizeKeyOnInstance() error {
 	return m.AuthorizeKeyOnContainer(m.cfg.Podman.ContainerName)
 }
 
-// ─── Image management ─────────────────────────────────────────────
+// --- Image management ---------------------------------------------
 
 // EnsureBackupImage ensures the shared pgbackrest backup image is available.
 // Tries podman pull first (for pre-built registry images), falls back to local build.
@@ -225,14 +225,14 @@ func (m *BackupManager) EnsureBackupImage() error {
 		return err
 	}
 	if exists {
-		fmt.Printf("→ Backup image %s already exists, skipping pull/build\n", tag)
+		fmt.Printf("-> Backup image %s already exists, skipping pull/build\n", tag)
 		return nil
 	}
 
 	// Try pull first
-	fmt.Printf("→ Pulling backup image %s...\n", tag)
+	fmt.Printf("-> Pulling backup image %s...\n", tag)
 	if _, err := m.run("pull", tag); err == nil {
-		fmt.Println("  ✓ Backup image pulled from registry")
+		fmt.Println("  [OK] Backup image pulled from registry")
 		return nil
 	}
 	fmt.Printf("  Pull failed, falling back to local build...\n")
@@ -243,7 +243,7 @@ func (m *BackupManager) EnsureBackupImage() error {
 
 // buildBackupImage builds the backup image from embedded backup.Containerfile.
 func (m *BackupManager) buildBackupImage(tag string) error {
-	fmt.Println("→ Building pgbackrest backup image...")
+	fmt.Println("-> Building pgbackrest backup image...")
 
 	buildDir := filepath.Join(m.dataDir, "backup-build")
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
@@ -259,11 +259,11 @@ func (m *BackupManager) buildBackupImage(tag string) error {
 		return fmt.Errorf("podman build backup image: %w", err)
 	}
 
-	fmt.Println("  ✓ Backup image built:", tag)
+	fmt.Println("  [OK] Backup image built:", tag)
 	return nil
 }
 
-// ─── Network management ──────────────────────────────────────────
+// --- Network management ------------------------------------------
 
 // EnsureNetwork creates a bridge network on macOS so containers can
 // communicate via DNS-resolved container names.  Linux uses host networking.
@@ -282,7 +282,7 @@ func (m *BackupManager) EnsureNetwork() error {
 	if _, err := m.run("network", "create", netName); err != nil {
 		return fmt.Errorf("creating network %s: %w", netName, err)
 	}
-	fmt.Println("  ✓ Bridge network created:", netName)
+	fmt.Println("  [OK] Bridge network created:", netName)
 	return nil
 }
 
@@ -300,7 +300,7 @@ func (m *BackupManager) networkExists(name string) (bool, error) {
 	return false, nil
 }
 
-// ─── Directory management ──────────────────────────────────────
+// --- Directory management --------------------------------------
 
 // EnsureBackupDirs creates the backup data and log directories on the host.
 func (m *BackupManager) EnsureBackupDirs() error {
@@ -317,12 +317,12 @@ func (m *BackupManager) EnsureBackupDirs() error {
 			if err := wslMkdirAll(wslPath); err != nil {
 				return fmt.Errorf("creating backup directory %s (wsl): %w", dir, err)
 			}
-			fmt.Printf("→ Backup directory ensured (WSL): %s\n", wslPath)
+			fmt.Printf("-> Backup directory ensured (WSL): %s\n", wslPath)
 		} else {
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				return fmt.Errorf("creating backup directory %s: %w", dir, err)
 			}
-			fmt.Printf("→ Backup directory ensured: %s\n", dir)
+			fmt.Printf("-> Backup directory ensured: %s\n", dir)
 		}
 	}
 	return nil
@@ -347,7 +347,7 @@ func (m *BackupManager) EnsureBackupInfra() error {
 	return m.EnsureBackupContainer(confPath)
 }
 
-// ─── pgbackrest.conf generation ──────────────────────────────────
+// --- pgbackrest.conf generation ----------------------------------
 
 // WritePgbackrestConf generates pgbackrest.conf with all instance stanzas.
 // Returns the path to the generated config file.
@@ -398,14 +398,14 @@ func (m *BackupManager) WritePgbackrestConf() (string, error) {
 		}
 	}
 
-	fmt.Printf("→ pgbackrest.conf generated: %s (%d stanzas)\n", confPath, len(m.cfg.Instances))
+	fmt.Printf("-> pgbackrest.conf generated: %s (%d stanzas)\n", confPath, len(m.cfg.Instances))
 	return confPath, nil
 }
 
-// ─── Container management ─────────────────────────────────────────────
+// --- Container management ---------------------------------------------
 
 // EnsureBackupContainer creates and starts the backup container, recreating it
-// if it already exists. All platforms use host networking — the container is
+// if it already exists. All platforms use host networking -- the container is
 // always refreshed to pick up the latest SSH config (per-instance ports). The
 // container runs sleep-infinity, so recreation is cheap.
 func (m *BackupManager) EnsureBackupContainer(confPath string) error {
@@ -417,13 +417,13 @@ func (m *BackupManager) EnsureBackupContainer(confPath string) error {
 	}
 
 	if exists {
-		fmt.Println("→ Recreating backup container to refresh SSH config...")
+		fmt.Println("-> Recreating backup container to refresh SSH config...")
 		if _, err := m.run("rm", "-f", containerName); err != nil {
 			return fmt.Errorf("removing backup container: %w", err)
 		}
 	}
 
-	fmt.Println("→ Creating and starting backup container...")
+	fmt.Println("-> Creating and starting backup container...")
 	return m.createBackupContainer(confPath)
 }
 
@@ -486,7 +486,7 @@ func (m *BackupManager) BackupExec(tailLogs bool, args ...string) (string, error
 	return execWithTimeout(m.podman, podmanArgs, 10*time.Minute)
 }
 
-// ─── Internal methods ─────────────────────────────────────────────
+// --- Internal methods ---------------------------------------------
 
 func (m *BackupManager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
@@ -580,6 +580,6 @@ func (m *BackupManager) createBackupContainer(confPath string) error {
 		return fmt.Errorf("creating backup container: %w", err)
 	}
 
-	fmt.Println("  ✓ Backup container started")
+	fmt.Println("  [OK] Backup container started")
 	return nil
 }

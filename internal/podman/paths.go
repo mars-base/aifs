@@ -26,7 +26,7 @@ func hostMountPath(hostPath string) string {
 	}
 
 	// Windows: use WSL-native ext4 path for POSIX filesystem semantics.
-	// Falls back to wslpath → /mnt/c/... for paths outside the config dir.
+	// Falls back to wslpath -> /mnt/c/... for paths outside the config dir.
 	return wslNativePath(hostPath)
 }
 
@@ -61,7 +61,7 @@ func windowsToWSLPath(hostPath string) string {
 	return p
 }
 
-// ─── WSL ext4 path mapping (Windows) ─────────────────────────────
+// --- WSL ext4 path mapping (Windows) -----------------------------
 
 // wslDistro returns the WSL distribution name for the podman machine.
 func wslDistro() string {
@@ -100,7 +100,7 @@ func wslHomeDir() string {
 // under the user's .aifs config directory to the WSL user's home directory
 // on the ext4 filesystem, giving full POSIX semantics.
 //
-// Paths outside the config directory fall back to wslpath → /mnt/c/...
+// Paths outside the config directory fall back to wslpath -> /mnt/c/...
 func wslNativePath(windowsPath string) string {
 	configDir := platform.DefaultConfigDir()
 

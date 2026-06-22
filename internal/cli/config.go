@@ -91,7 +91,7 @@ Examples:
 		}
 
 		if _, err := os.Stat(path); err == nil {
-			return fmt.Errorf("config file already exists: %s — remove it first or use -o / --output to specify a different path", path)
+			return fmt.Errorf("config file already exists: %s -- remove it first or use -o / --output to specify a different path", path)
 		}
 
 		cfg := config.Default()
@@ -119,12 +119,12 @@ Examples:
 			return err
 		}
 
-		fmt.Printf("✓ config file generated: %s\n", path)
+		fmt.Printf("[OK] config file generated: %s\n", path)
 		if configBaseDir != "" {
 			fmt.Printf("  base-dir:   %s\n", configBaseDir)
 		}
 		if len(cfg.Instances) == 0 {
-			fmt.Println("  instances: (empty — add instances manually or use --add)")
+			fmt.Println("  instances: (empty -- add instances manually or use --add)")
 		} else {
 			for name := range cfg.Instances {
 				fmt.Printf("  instances.%s: ready\n", name)
@@ -138,7 +138,7 @@ var configValidateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate configuration file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Load raw config without SetInstance — validate checks the file structure,
+		// Load raw config without SetInstance -- validate checks the file structure,
 		// not whether a particular instance is ready to run.
 		path := cfgPath
 		if path == "" {
@@ -166,7 +166,7 @@ var configValidateCmd = &cobra.Command{
 			}
 		}
 
-		fmt.Println("✓ config validation passed")
+		fmt.Println("[OK] config validation passed")
 		return nil
 	},
 }

@@ -50,7 +50,7 @@ func New(cfg *config.Config) (*Manager, error) {
 	}, nil
 }
 
-// ─── Machine management ─────────────────────────────────────────
+// --- Machine management -----------------------------------------
 
 // EnsureMachine ensures the runtime is ready for podman containers.
 // On macOS this initializes/starts the podman machine; on Windows it starts
@@ -86,14 +86,14 @@ func (m *Manager) EnsureMachine() error {
 	}
 
 	if !hasMachine {
-		fmt.Println("→ Initializing podman machine (first use, may take a few minutes)...")
+		fmt.Println("-> Initializing podman machine (first use, may take a few minutes)...")
 		if err := m.runInteractive("machine", "init"); err != nil {
 			return fmt.Errorf("podman machine init: %w", err)
 		}
 	}
 
 	if !machineRunning {
-		fmt.Println("→ Starting podman machine...")
+		fmt.Println("-> Starting podman machine...")
 		if err := m.runInteractive("machine", "start"); err != nil {
 			return fmt.Errorf("podman machine start: %w", err)
 		}
@@ -102,7 +102,7 @@ func (m *Manager) EnsureMachine() error {
 	return nil
 }
 
-// ─── Image management ─────────────────────────────────────────────
+// --- Image management ---------------------------------------------
 
 // EnsureImage ensures the PostgreSQL + pgBackRest image is available.
 // Tries podman pull first (for pre-built registry images), falls back to local build.
@@ -114,14 +114,14 @@ func (m *Manager) EnsureImage() error {
 		return err
 	}
 	if exists {
-		fmt.Printf("→ Image %s already exists, skipping pull/build\n", tag)
+		fmt.Printf("-> Image %s already exists, skipping pull/build\n", tag)
 		return nil
 	}
 
 	// Try pull first
-	fmt.Printf("→ Pulling image %s...\n", tag)
+	fmt.Printf("-> Pulling image %s...\n", tag)
 	if _, err := m.run("pull", tag); err == nil {
-		fmt.Println("  ✓ Image pulled from registry")
+		fmt.Println("  [OK] Image pulled from registry")
 		return nil
 	}
 	fmt.Printf("  Pull failed, falling back to local build...\n")
@@ -132,7 +132,7 @@ func (m *Manager) EnsureImage() error {
 
 // buildImage builds the PG image from embedded Containerfile and init.sh.
 func (m *Manager) buildImage(tag string) error {
-	fmt.Println("→ Building PostgreSQL + pgBackRest image...")
+	fmt.Println("-> Building PostgreSQL + pgBackRest image...")
 
 	buildDir := filepath.Join(m.dataDir, "build")
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
@@ -157,7 +157,7 @@ func (m *Manager) buildImage(tag string) error {
 	return nil
 }
 
-// ─── Network management ──────────────────────────────────────────
+// --- Network management ------------------------------------------
 
 // EnsureNetwork creates a bridge network on macOS so containers can
 // communicate via DNS-resolved container names.  Linux continues to
@@ -177,7 +177,7 @@ func (m *Manager) EnsureNetwork() error {
 	if _, err := m.run("network", "create", netName); err != nil {
 		return fmt.Errorf("creating network %s: %w", netName, err)
 	}
-	fmt.Println("  ✓ Bridge network created:", netName)
+	fmt.Println("  [OK] Bridge network created:", netName)
 	return nil
 }
 
@@ -223,12 +223,12 @@ func (m *Manager) EnsureDirs() error {
 			if err := wslMkdirAll(hostMountPath(dir)); err != nil {
 				return fmt.Errorf("creating data directory %s (wsl): %w", dir, err)
 			}
-			fmt.Printf("→ Data directory ensured (WSL): %s\n", hostMountPath(dir))
+			fmt.Printf("-> Data directory ensured (WSL): %s\n", hostMountPath(dir))
 		} else {
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				return fmt.Errorf("creating data directory %s: %w", dir, err)
 			}
-			fmt.Printf("→ Data directory ensured: %s\n", dir)
+			fmt.Printf("-> Data directory ensured: %s\n", dir)
 		}
 	}
 
@@ -241,7 +241,7 @@ func (m *Manager) PGHostDataDir() string {
 	return filepath.Join(m.cfg.Podman.DataDir, "data")
 }
 
-// ─── Container management ─────────────────────────────────────────────
+// --- Container management ---------------------------------------------
 
 // ContainerStatus represents the running status of a container.
 type ContainerStatus struct {
@@ -261,7 +261,7 @@ func (m *Manager) EnsureContainer() error {
 	}
 
 	if !exists {
-		fmt.Println("→ Creating and starting PostgreSQL container...")
+		fmt.Println("-> Creating and starting PostgreSQL container...")
 		return m.createContainer()
 	}
 
@@ -270,11 +270,11 @@ func (m *Manager) EnsureContainer() error {
 		return err
 	}
 	if !running {
-		fmt.Println("→ Starting PostgreSQL container...")
+		fmt.Println("-> Starting PostgreSQL container...")
 		return m.StartContainer()
 	}
 
-	fmt.Printf("→ Container %s is already running\n", m.cfg.Podman.ContainerName)
+	fmt.Printf("-> Container %s is already running\n", m.cfg.Podman.ContainerName)
 	return nil
 }
 
@@ -283,7 +283,7 @@ func (m *Manager) StartContainer() error {
 	if _, err := m.run("start", m.cfg.Podman.ContainerName); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
-	fmt.Println("  ✓ Container started (check readiness with: aifs status)")
+	fmt.Println("  [OK] Container started (check readiness with: aifs status)")
 	return nil
 }
 
@@ -338,9 +338,9 @@ func (m *Manager) Destroy() error {
 // stanza directories in the shared backup repo.
 func (m *Manager) DestroyWithData(cleanData bool) error {
 	if cleanData {
-		fmt.Println("⚠️  Removing container and all host data")
+		fmt.Println("!  Removing container and all host data")
 	} else {
-		fmt.Println("⚠️  Removing container (host data directories are preserved)")
+		fmt.Println("!  Removing container (host data directories are preserved)")
 	}
 
 	// Stopping and removing container
@@ -366,7 +366,7 @@ func (m *Manager) DestroyWithData(cleanData bool) error {
 		if err := removeHostDir(m.podman, desc.path); err != nil {
 			return fmt.Errorf("removing %s directory %s: %w", desc.name, desc.path, err)
 		}
-		fmt.Printf("  ✓ %s directory removed: %s\n", desc.name, desc.path)
+		fmt.Printf("  [OK] %s directory removed: %s\n", desc.name, desc.path)
 	}
 
 	// Remove pgBackRest stanza directories from the shared repo.
@@ -379,7 +379,7 @@ func (m *Manager) DestroyWithData(cleanData bool) error {
 				return fmt.Errorf("removing repo %s directory %s: %w", sub, p, err)
 			}
 		}
-		fmt.Printf("  ✓ backup stanza removed: %s\n", stanza)
+		fmt.Printf("  [OK] backup stanza removed: %s\n", stanza)
 	}
 
 	return nil
@@ -454,7 +454,7 @@ func (m *Manager) ContainerIP() (string, error) {
 // so concurrent aifs processes (e.g. parallel e2e tests) won't collide, while
 // still allowing cleanup of orphaned containers from prior runs via prefix
 // matching. A deferred "podman rm -f" acts as a safety net beyond the --rm flag.
-// No timeout is enforced — restore duration depends on database size and may
+// No timeout is enforced -- restore duration depends on database size and may
 // take hours for large datasets.
 func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (string, error) {
 	confPath, err := m.writeInstancePgbackrestConf()
@@ -499,7 +499,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 		"--log-level-console=info",
 	}
 
-	// Run without timeout — restore can take a long time for large databases.
+	// Run without timeout -- restore can take a long time for large databases.
 	slog.Debug("podman", "args", args)
 	cmd := exec.Command(m.podman, args...)
 
@@ -536,7 +536,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 	return out, nil
 }
 
-// ─── Internal methods ─────────────────────────────────────────────
+// --- Internal methods ---------------------------------------------
 
 func (m *Manager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
@@ -663,7 +663,7 @@ func (m *Manager) createContainer() error {
 	if _, err := m.run(args...); err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
-	fmt.Println("  ✓ Container created, PostgreSQL is initializing (check with: aifs status)")
+	fmt.Println("  [OK] Container created, PostgreSQL is initializing (check with: aifs status)")
 	return nil
 }
 
@@ -674,7 +674,7 @@ func (m *Manager) writeInstancePgbackrestConf() (string, error) {
 
 	// All platforms use host networking now: each PG instance listens on a
 	// unique port (PGPORT env var / pg1-port below).  Without pg1-port, the
-	// remote pgbackrest process (over SSH) defaults to 5432 — but sshd does
+	// remote pgbackrest process (over SSH) defaults to 5432 -- but sshd does
 	// not forward PGPORT, so instances with custom ports fail stanza-create.
 	content := fmt.Sprintf(`[%s]
 pg1-path=/var/lib/postgresql/data

@@ -35,7 +35,7 @@ func New(cfg *config.Config, pm *podman.Manager, bm *podman.BackupManager) *Mana
 	return &Manager{cfg: cfg, podman: pm, backup: bm}
 }
 
-// ─── Stanza management ──────────────────────────────────────────
+// --- Stanza management ------------------------------------------
 
 // EnsureStanza ensures the pgBackRest stanza is created.
 func (m *Manager) EnsureStanza() error {
@@ -49,7 +49,7 @@ func (m *Manager) EnsureStanza() error {
 	for i := 0; i < 15; i++ {
 		out, err = m.pgbackrest(false, "--stanza="+stanza, "stanza-create", "--log-level-console=info")
 		if err == nil {
-			fmt.Println("→ pgBackRest stanza created")
+			fmt.Println("-> pgBackRest stanza created")
 			break
 		}
 		// stanza-create errors if already exists, ignore
@@ -74,7 +74,7 @@ func (m *Manager) EnsureStanza() error {
 
 	// Make sure repo files are readable by the postgres user during archive-get.
 	if err := m.backup.EnsureRepoReadable(); err != nil {
-		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
+		fmt.Printf("  [!] repo readability warning: %v\n", err)
 	}
 	return nil
 }
@@ -89,7 +89,7 @@ func (m *Manager) CheckStanza() error {
 	return nil
 }
 
-// ─── Snapshot management ─────────────────────────────────────────────
+// --- Snapshot management ---------------------------------------------
 
 // CreateSnapshot creates a backup snapshot.
 // backupType: "full" (default), "incr", "diff"
@@ -107,7 +107,7 @@ func (m *Manager) CreateSnapshot(backupType string, tailLogs bool) (*Snapshot, e
 		"--log-level-console=info",
 	}
 
-	fmt.Printf("→ Creating %s backup...\n", backupType)
+	fmt.Printf("-> Creating %s backup...\n", backupType)
 	out, err := m.pgbackrest(tailLogs, args...)
 	if err != nil {
 		_ = m.backup.EnsureRepoReadable()
@@ -116,7 +116,7 @@ func (m *Manager) CreateSnapshot(backupType string, tailLogs bool) (*Snapshot, e
 
 	// Make sure repo files are readable by the postgres user during archive-get/recovery.
 	if err := m.backup.EnsureRepoReadable(); err != nil {
-		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
+		fmt.Printf("  [!] repo readability warning: %v\n", err)
 	}
 
 	// Parse backup label
@@ -126,7 +126,7 @@ func (m *Manager) CreateSnapshot(backupType string, tailLogs bool) (*Snapshot, e
 		Timestamp: time.Now(),
 		Type:      backupType,
 	}
-	fmt.Printf("  ✓ Snapshot created: %s (%s)\n", label, backupType)
+	fmt.Printf("  [OK] Snapshot created: %s (%s)\n", label, backupType)
 	return snap, nil
 }
 
@@ -165,7 +165,7 @@ func (m *Manager) DeleteSnapshot(name string) error {
 	if err != nil {
 		return fmt.Errorf("deleting backup %s: %w\n%s", name, err, out)
 	}
-	fmt.Printf("→ Snapshot %s deleted\n", name)
+	fmt.Printf("-> Snapshot %s deleted\n", name)
 	return nil
 }
 
@@ -183,11 +183,11 @@ func (m *Manager) DeleteBefore(before time.Time) error {
 	if err != nil {
 		return fmt.Errorf("cleaning old backups: %w\n%s", err, out)
 	}
-	fmt.Println("→ Old backups cleaned")
+	fmt.Println("-> Old backups cleaned")
 	return nil
 }
 
-// ─── PITR restore ────────────────────────────────────────────
+// --- PITR restore --------------------------------------------
 
 // Restore performs point-in-time recovery.
 // targetTime specifies the recovery target time.
@@ -201,15 +201,15 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 	targetStr := targetTime.Format("2006-01-02 15:04:05-07")
 
 	if dryRun {
-		fmt.Printf("→ [DRY RUN] Would restore to: %s\n", targetStr)
+		fmt.Printf("-> [DRY RUN] Would restore to: %s\n", targetStr)
 		return nil
 	}
 
-	fmt.Printf("⚠️  Restoring PostgreSQL to %s\n", targetStr)
+	fmt.Printf("!  Restoring PostgreSQL to %s\n", targetStr)
 
 	// Ensure repo is readable by postgres user during recovery archive-get.
 	if err := m.backup.EnsureRepoReadable(); err != nil {
-		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
+		fmt.Printf("  [!] repo readability warning: %v\n", err)
 	}
 
 	fmt.Println("  1/3 Stopping PostgreSQL...")
@@ -225,7 +225,7 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 
 	// Restore may create repo files owned by root; make them readable again.
 	if err := m.backup.EnsureRepoReadable(); err != nil {
-		fmt.Printf("  ⚠ repo readability warning: %v\n", err)
+		fmt.Printf("  [!] repo readability warning: %v\n", err)
 	}
 
 	fmt.Println("  3/3 Starting PostgreSQL...")
@@ -236,14 +236,14 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 	// PG container IP may have changed; refresh backup container /etc/hosts so
 	// subsequent backups can reach it.
 	if err := m.backup.EnsureBackupInfra(); err != nil {
-		fmt.Printf("  ⚠ backup infra refresh warning: %v\n", err)
+		fmt.Printf("  [!] backup infra refresh warning: %v\n", err)
 	}
 
-	fmt.Println("✓ Restore complete")
+	fmt.Println("[OK] Restore complete")
 	return nil
 }
 
-// ─── Internal methods ─────────────────────────────────────────────
+// --- Internal methods ---------------------------------------------
 
 func (m *Manager) pgbackrest(tailLogs bool, args ...string) (string, error) {
 	slog.Debug("pgbackrest", "args", args)

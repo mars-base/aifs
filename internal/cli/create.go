@@ -44,7 +44,7 @@ Examples:
 
 		// Check if config file exists
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return fmt.Errorf("config file not found: %s — run \"aifs config init\" first", path)
+			return fmt.Errorf("config file not found: %s -- run \"aifs config init\" first", path)
 		}
 
 		// Load existing config (without SetInstance)
@@ -70,7 +70,7 @@ Examples:
 			cfg.BaseDir = createBaseDir
 		}
 
-		// Build instance config — InstanceDefaults respects cfg.BaseDir
+		// Build instance config -- InstanceDefaults respects cfg.BaseDir
 		inst := cfg.InstanceDefaults(cfgInstance)
 		inst.Postgres.Database = cfgInstance + "_db"
 		inst.Postgres.Password = password
@@ -85,7 +85,7 @@ Examples:
 			return fmt.Errorf("failed to save config: %w", err)
 		}
 
-		fmt.Printf("✓ instance %q created\n", cfgInstance)
+		fmt.Printf("[OK] instance %q created\n", cfgInstance)
 		fmt.Printf("  database:   %s\n", inst.Postgres.Database)
 		fmt.Printf("  password:   %s\n", inst.Postgres.Password)
 		fmt.Printf("  container:  %s\n", inst.Podman.ContainerName)
