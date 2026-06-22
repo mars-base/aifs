@@ -23,7 +23,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "aifs",
 	Short: "AI-native filesystem with PITR powered by PostgreSQL",
-	Long: `aifs is a CLI tool that gives AI Agents a "time machine" filesystem.
+	Long: `aifs gives you a "time machine" filesystem.
 Leverages PITR (Point-In-Time Recovery) to rollback the filesystem to any historical moment.`,
 	SilenceUsage: true,
 }
