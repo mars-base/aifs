@@ -27,6 +27,10 @@ Write-Host "========================================"
 Write-Host "  AIFS Setup - WSL2 + Podman Installer"
 Write-Host "========================================"
 Write-Host ""
+Write-Host "Note: enabling WSL2 may require a reboot. If the script says"
+Write-Host "'REBOOT REQUIRED', restart the machine and re-run the SAME"
+Write-Host "command — it will resume from where it left off."
+Write-Host ""
 
 # ─── Helper: read one CPU property via CIM ──────────────
 # Note: Win11 24H2 / LTSC 2024 removed wmic.exe by default, so we use
@@ -223,10 +227,19 @@ if (-not $wslWorking) {
 
     if ($needReboot) {
         Write-Host ""
-        Write-Host "  *** REBOOT REQUIRED to activate WSL features ***"
-        Write-Host "  Please reboot, then re-run this script."
-        Print-Result "Reboot required" "warn" "dism returned 3010"
-        exit 1
+        Write-Host "  ============================================================"
+        Write-Host "    REBOOT REQUIRED to activate WSL features (dism: 3010)"
+        Write-Host "    This is normal — not an error."
+        Write-Host ""
+        Write-Host "    Next steps:"
+        Write-Host "      1. Restart this machine."
+        Write-Host "      2. Re-run the SAME install command you just ran."
+        Write-Host "         The script will resume from where it left off."
+        Write-Host "  ============================================================"
+        Print-Result "Reboot required" "warn" "dism returned 3010 — reboot then re-run"
+        # Exit 0 (not 1): a required reboot is a normal setup step, not a failure.
+        # exit 1 would make `irm | iex` abort with an error and hide this message.
+        exit 0
     }
 
     # Step 2: Try wsl --install --no-distribution (may upgrade inbox stub to Store version)
