@@ -115,6 +115,31 @@ function Pause-IfInteractive {
     Write-Host ""
 }
 
+# ─── Helper: invoke wsl.exe safely ──────────────────────
+# Start-Process -FilePath "wsl.exe" can throw a terminating
+# InvalidOperationException ("system cannot find the file specified") when the
+# inbox wsl.exe stub is present but not resolvable in the current context
+# (e.g. scheduled task S4U, or features enabled but kernel not yet installed).
+# That terminating error would abort the whole script. Resolve the full path
+# via Get-Command first, and wrap the call in try/catch so a wsl invocation
+# failure is reported as a warning rather than crashing setup.
+function Invoke-Wsl {
+    param([Parameter(Mandatory)][string[]]$Args)
+    $exe = (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source
+    if (-not $exe) {
+        Write-Host "  wsl.exe not found on PATH; skipping wsl invocation."
+        return $null
+    }
+    try {
+        $p = Start-Process -FilePath $exe -ArgumentList $Args -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:TEMP\wsl.out" -RedirectStandardError "$env:TEMP\wsl.err"
+        return $p.ExitCode
+    } catch {
+        Write-Host "  wsl.exe invocation failed: $($_.Exception.Message)"
+        return $null
+    }
+}
+
 # ═══════════════════════════════════════════════════════════
 # PHASE 1: Check CPU virtualization
 # ═══════════════════════════════════════════════════════════
@@ -151,9 +176,8 @@ if ($cpuOk) {
 
     # Cross-check 2: wsl --status actually works
     if (-not $cpuOk -and (CmdExists "wsl")) {
-        $probe = Start-Process -FilePath "wsl.exe" -ArgumentList "--status" -Wait -PassThru -NoNewWindow `
-            -RedirectStandardOutput "$env:TEMP\wsl-probe.out" -RedirectStandardError "$env:TEMP\wsl-probe.err"
-        if ($probe.ExitCode -eq 0) {
+        $probeRc = Invoke-Wsl -Args "--status"
+        if ($probeRc -eq 0) {
             Print-Result "wsl --status succeeded" "ok" "WSL2 is functional"
             $cpuOk = $true
         }
@@ -185,9 +209,8 @@ $wslWorking = $false
 
 if ($wslExists) {
     # Probe: does wsl actually work? (inbox stub returns help text for everything)
-    $probe = Start-Process -FilePath "wsl.exe" -ArgumentList "--status" -Wait -PassThru -NoNewWindow `
-        -RedirectStandardOutput "$env:TEMP\wsl-probe.out" -RedirectStandardError "$env:TEMP\wsl-probe.err"
-    if ($probe.ExitCode -eq 0) {
+    $probeRc = Invoke-Wsl -Args "--status"
+    if ($probeRc -eq 0) {
         $wslWorking = $true
         Print-Result "WSL already installed and working" "skip"
     } else {
@@ -266,12 +289,14 @@ if (-not $wslWorking) {
     # Step 2: Try wsl --install --no-distribution (may upgrade inbox stub to Store version)
     Write-Host ""
     Write-Host "  Running: wsl --install --no-distribution"
-    $wslProc = Start-Process -FilePath "wsl.exe" -ArgumentList "--install","--no-distribution" -Wait -PassThru -NoNewWindow
+    $wslInstallRc = Invoke-Wsl -Args "--install","--no-distribution"
 
-    if ($wslProc.ExitCode -eq 0) {
+    if ($wslInstallRc -eq 0) {
         Print-Result "wsl --install --no-distribution" "ok"
+    } elseif ($null -eq $wslInstallRc) {
+        Print-Result "wsl --install" "warn" "wsl.exe could not be launched (stub not active yet?) — retry after reboot"
     } else {
-        Print-Result "wsl --install" "warn" "Exit code: $($wslProc.ExitCode) (may be ok after reboot)"
+        Print-Result "wsl --install" "warn" "Exit code: $wslInstallRc (may be ok after reboot)"
     }
 
     # Refresh PATH
@@ -280,18 +305,22 @@ if (-not $wslWorking) {
 
 # Set WSL2 as default version and update kernel (runs whether freshly installed or pre-existing)
 if (CmdExists "wsl") {
-    $setDefault = Start-Process -FilePath "wsl.exe" -ArgumentList "--set-default-version","2" -Wait -PassThru -NoNewWindow
-    if ($setDefault.ExitCode -eq 0) {
+    $setDefaultRc = Invoke-Wsl -Args "--set-default-version","2"
+    if ($setDefaultRc -eq 0) {
         Print-Result "WSL default version 2" "ok"
+    } elseif ($null -eq $setDefaultRc) {
+        Print-Result "WSL set-default-version" "warn" "wsl.exe not launchable — retry after reboot"
     } else {
-        Print-Result "WSL set-default-version" "warn" "Exit code: $($setDefault.ExitCode) — reboot may be needed"
+        Print-Result "WSL set-default-version" "warn" "Exit code: $setDefaultRc — reboot may be needed"
     }
 
-    $updateKernel = Start-Process -FilePath "wsl.exe" -ArgumentList "--update" -Wait -PassThru -NoNewWindow
-    if ($updateKernel.ExitCode -eq 0) {
+    $updateKernelRc = Invoke-Wsl -Args "--update"
+    if ($updateKernelRc -eq 0) {
         Print-Result "WSL kernel updated" "ok"
+    } elseif ($null -eq $updateKernelRc) {
+        Print-Result "WSL update" "warn" "wsl.exe not launchable — retry after reboot"
     } else {
-        Print-Result "WSL update" "warn" "Exit code: $($updateKernel.ExitCode) — reboot may be needed"
+        Print-Result "WSL update" "warn" "Exit code: $updateKernelRc — reboot may be needed"
         Write-Host ""
         Write-Host "  If podman machine init later fails with a WSL2 kernel error,"
         Write-Host "  manually download and install the WSL2 Linux kernel update package:"
