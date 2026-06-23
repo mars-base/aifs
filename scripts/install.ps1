@@ -52,10 +52,16 @@ Write-Step "Downloading aifs binary..."
 # Detect arch
 $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
 
-# Fetch latest release
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/${repo}/releases/latest"
-$tag = $release.tag_name
 $url = "https://github.com/${repo}/releases/latest/download/aifs-windows-${arch}.exe"
+
+# Try to resolve version tag for display (GitHub API may rate-limit; non-fatal).
+$tag = ""
+try {
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/${repo}/releases/latest" -TimeoutSec 10
+    $tag = $release.tag_name
+} catch {
+    $tag = "latest"
+}
 
 Write-Info "  $url"
 
@@ -111,7 +117,114 @@ if (Test-Podman) {
     Write-Hint "wsl --install"
 }
 
-# --- Phase 3: Post-install notes ------------------------------------
+# --- Phase 3: Configure WSL auto-start ---------------------------------
+# Ensures the podman API service survives Windows reboots:
+#   1. .wslconfig — disable WSL VM idle timeout
+#   2. /etc/wsl.conf [boot] — starts podman system service when VM boots
+#   3. Scheduled Task — wakes WSL VM at user logon so [boot] fires
+
+Write-Step "Configuring WSL auto-start for podman..."
+
+# --- 3a. .wslconfig (no idle timeout) ---
+# Must be written BEFORE the first wsl command that cold-boots the VM.
+# By default WSL2 VMs shut down ~8s after the last terminal exits. Disable
+# idle timeout so the podman service stays alive across reboots.
+try {
+    $wslConfig = @"
+[wsl2]
+vmIdleTimeout=-1
+"@
+    $wslConfig | Out-File -FilePath "$env:USERPROFILE\.wslconfig" -Encoding ascii -Force
+    Write-Ok ".wslconfig created (vmIdleTimeout=-1)"
+} catch {
+    Write-Warn ".wslconfig creation failed: $_"
+}
+
+# --- 3b. WSL [boot] configuration ---
+# Use -u root to write /etc/wsl.conf (default user does not own /etc).
+# This is the first wsl command — it cold-boots the VM, so .wslconfig must
+# already exist.
+$bootConfig = @"
+[boot]
+systemd=true
+command=podman system service -t 0 tcp://0.0.0.0:2375
+"@
+$bootB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bootConfig))
+try {
+    wsl -d podman-machine-default -u root --exec sh -c "echo $bootB64 | base64 -d > /etc/wsl.conf" 2>$null
+    Write-Ok "/etc/wsl.conf [boot] configured"
+} catch {
+    Write-Warn "WSL /etc/wsl.conf config failed: $_"
+}
+
+# --- 3c. Scheduled Task: WSL Wake at logon ---
+# WSL VM is per-user and shuts down when idle.  This task runs "wsl echo ready"
+# at user logon to wake the VM; [boot] then starts podman system service.
+# portproxy is managed by aifs at runtime (EnsurePodmanService).
+try {
+    $taskName = "WSL Podman Wake"
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+    $action    = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "echo ready"
+    $trigger   = New-ScheduledTaskTrigger -AtLogon -User "$env:USERDOMAIN\$env:USERNAME"
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
+    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    Write-Ok "Scheduled Task '$taskName' created (wakes WSL at logon)"
+} catch {
+    Write-Warn "Scheduled Task creation failed: $_"
+}
+
+# --- 3d. Start podman service in the current session ---
+# [boot] only fires on VM cold-boot, not on an already-running VM.
+# Start the service explicitly so Phase 4 can pull images.
+try {
+    Start-Process -WindowStyle Hidden -FilePath wsl -ArgumentList '-d','podman-machine-default','--exec','podman','system','service','-t','0','tcp://0.0.0.0:2375'
+    # Wait for the service to be reachable.
+    $env:CONTAINER_HOST = "tcp://localhost:2375"
+    for ($i = 0; $i -lt 20; $i++) {
+        $info = podman info 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Podman service started and reachable"
+            break
+        }
+        Start-Sleep -Milliseconds 500
+    }
+} catch {
+    Write-Warn "Podman service startup failed, images will be pulled on first aifs start"
+}
+
+# --- Phase 4: Pull container images ----------------------------------
+
+Write-Step "Pulling aifs container images..."
+
+# podman on Windows needs CONTAINER_HOST to reach the WSL service.
+$env:CONTAINER_HOST = "tcp://localhost:2375"
+
+# These are the default image tags from aifs config.
+# Failures here are non-fatal -- images will be pulled on first use.
+try {
+    podman pull ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0 *>$null
+    Write-Ok "aifs-pg:18-2.58.0"
+} catch {
+    Write-Warn "aifs-pg pull failed, will retry on first use"
+}
+
+try {
+    podman pull ghcr.io/mars-base/aifs/aifs-backup:2.58.0 *>$null
+    Write-Ok "aifs-backup:2.58.0"
+} catch {
+    Write-Warn "aifs-backup pull failed, will retry on first use"
+}
+
+try {
+    podman pull docker.io/library/alpine:3.20 *>$null
+    Write-Ok "alpine:3.20 (helper)"
+} catch {
+    Write-Warn "alpine helper image pull failed, will retry on first use"
+}
+
+# --- Phase 5: Post-install notes ------------------------------------
 
 Write-Host ""
 Write-Host "OK aifs installation complete" -ForegroundColor Green
