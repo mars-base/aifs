@@ -451,13 +451,26 @@ func (m *Manager) ContainerIP() (string, error) {
 // (which has no pg1-host, so restore runs locally on the data directory).
 // If tailLogs is true, the container's stdout/stderr is also streamed to os stdout/stderr.
 //
+// When promote is false (default), --target-action=pause is used: PostgreSQL
+// starts up, replays WAL up to the target time, then PAUSES recovery in a
+// read-only state. This lets the user inspect the data at that point in time
+// and, if unsatisfied, restore again to a different target without polluting
+// the WAL archive -- no timeline switch happens, so the archive chain stays
+// intact and repeated PITR "time travel" remains possible.
+//
+// When promote is true, --target-action=promote is used: recovery completes
+// and the cluster is promoted to a new timeline, becoming read-write. This
+// switches the timeline and writes new WAL, so further PITR to points after
+// the backup requires a fresh snapshot first. Use promote only when the
+// restored state is confirmed correct.
+//
 // The temporary container is given a deterministic --name with a PID suffix
 // so concurrent aifs processes (e.g. parallel e2e tests) won't collide, while
 // still allowing cleanup of orphaned containers from prior runs via prefix
 // matching. A deferred "podman rm -f" acts as a safety net beyond the --rm flag.
 // No timeout is enforced -- restore duration depends on database size and may
 // take hours for large datasets.
-func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (string, error) {
+func (m *Manager) RunRestoreContainer(stanza, target string, promote, tailLogs bool) (string, error) {
 	confPath, err := m.writeInstancePgbackrestConf()
 	if err != nil {
 		return "", fmt.Errorf("generating pgbackrest.conf: %w", err)
@@ -487,17 +500,51 @@ func (m *Manager) RunRestoreContainer(stanza, target string, tailLogs bool) (str
 		m.run("rm", "-f", restoreName)
 	}()
 
+	// Wipe the PG data directory before restore. pgBackRest --delta (incremental
+	// restore) is unsafe when the cluster has already been promoted to a new
+	// timeline by a prior restore -- replaying WAL onto a promoted data directory
+	// causes PostgreSQL to exit(1) during recovery with a timeline mismatch. A
+	// clean full restore every time is correct and predictable; PITR "time
+	// travel" is not meant to reuse a previously-promoted cluster state.
+	dataVol := hostMountPath(m.cfg.Podman.DataDir)
+	// Remove the entire PGDATA directory and recreate it empty. This is more
+	// reliable than `rm -rf data/*` which can leave hidden files, fail on
+	// glob mismatches, or skip files held open. pgBackRest restore (without
+	// --delta) requires an empty target directory; deleting and recreating it
+	// guarantees a clean slate regardless of prior promote/timeline state.
+	wipe := exec.Command(m.podman, "run", "--rm",
+		"-u", "root",
+		"--name", restoreName+"-wipe",
+		"--network", "host",
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", dataVol),
+		m.cfg.Podman.ImageTag,
+		"sh", "-c", "rm -rf /var/lib/postgresql/data && mkdir -p /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data",
+	)
+	hideWindow(wipe)
+	if err := wipe.Run(); err != nil {
+		return "", fmt.Errorf("wiping data directory before restore: %w", err)
+	}
+
+	// Determine the recovery target action. pause (default) keeps the cluster
+	// read-only at the target time so the user can verify the data and restore
+	// again to a different point without switching timelines; promote switches
+	// to a new timeline and makes the cluster read-write.
+	targetAction := "pause"
+	if promote {
+		targetAction = "promote"
+	}
+
 	args := []string{
 		"run", "--rm",
 		"--name", restoreName,
 		"--network", "host",
-		"-v", fmt.Sprintf("%s:/var/lib/postgresql", hostMountPath(m.cfg.Podman.DataDir)),
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", dataVol),
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(m.cfg.Backup.DataDir)),
 		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
 		m.cfg.Podman.ImageTag,
 		"pgbackrest", "--stanza=" + stanza, "restore",
 		"--type=time", "--target=" + target,
-		"--target-action=promote", "--delta",
+		"--target-action=" + targetAction,
 		"--log-level-console=info",
 	}
 

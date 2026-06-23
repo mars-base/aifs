@@ -85,7 +85,7 @@ var statusCmd = &cobra.Command{
 			select {
 			case r := <-ch:
 				if r.err == nil && len(r.snapshots) > 0 {
-					fmt.Println("\nRecent backups:")
+					fmt.Println("\nRecent backups(UTC):")
 					for _, s := range r.snapshots {
 						fmt.Printf("  %s  %s  %s\n",
 							s.Timestamp.Format("2006-01-02 15:04"),

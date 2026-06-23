@@ -191,21 +191,25 @@ func (m *Manager) DeleteBefore(before time.Time) error {
 
 // Restore performs point-in-time recovery.
 // targetTime specifies the recovery target time.
+// promote controls the recovery target action: when false (default) the
+// cluster is left paused at the target time in read-only state so the data
+// can be inspected and Restore called again with a different target; when
+// true the cluster is promoted to a new timeline and becomes read-write.
 // dryRun only prints the plan. tailLogs streams the restore container output to stdout.
 // Restore process:
 // 1. Stop PostgreSQL container
 // 2. pgBackRest restore in a temporary container mounting the same data directory
 // 3. Start PostgreSQL container
-func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) error {
+func (m *Manager) Restore(targetTime time.Time, promote, dryRun, tailLogs bool) error {
 	stanza := m.cfg.PITR.PgBackRestStanza
 	targetStr := targetTime.Format("2006-01-02 15:04:05-07")
 
 	if dryRun {
-		fmt.Printf("-> [DRY RUN] Would restore to: %s\n", targetStr)
+		fmt.Printf("-> [DRY RUN] Would restore to: %s (target-action=%s)\n", targetStr, targetActionName(promote))
 		return nil
 	}
 
-	fmt.Printf("!  Restoring PostgreSQL to %s\n", targetStr)
+	fmt.Printf("!  Restoring PostgreSQL to %s (target-action=%s)\n", targetStr, targetActionName(promote))
 
 	// Ensure repo is readable by postgres user during recovery archive-get.
 	if err := m.backup.EnsureRepoReadable(); err != nil {
@@ -218,7 +222,7 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 	}
 
 	fmt.Println("  2/3 Running pgBackRest restore...")
-	out, err := m.podman.RunRestoreContainer(stanza, targetStr, tailLogs)
+	out, err := m.podman.RunRestoreContainer(stanza, targetStr, promote, tailLogs)
 	if err != nil {
 		return fmt.Errorf("pgBackRest restore: %w\n%s", err, out)
 	}
@@ -231,6 +235,16 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 	fmt.Println("  3/3 Starting PostgreSQL...")
 	if err := m.podman.StartContainer(); err != nil {
 		return fmt.Errorf("starting container: %w", err)
+	}
+
+	// Re-authorize the backup SSH key on the PG container now that it is
+	// running. The authorized_keys file lives inside the container and is lost
+	// when the container is recreated; restore does not need SSH itself (it
+	// uses a temporary container that mounts the data dir locally), but the
+	// key must be installed before the next backup. We do this after start so
+	// it also works when PG was down (e.g. recovering from a failed restore).
+	if err := m.backup.AuthorizeKeyOnInstance(); err != nil {
+		fmt.Printf("  [!] backup key authorization warning: %v\n", err)
 	}
 
 	// PG container IP may have changed; refresh backup container /etc/hosts so
@@ -248,6 +262,14 @@ func (m *Manager) Restore(targetTime time.Time, dryRun bool, tailLogs bool) erro
 func (m *Manager) pgbackrest(tailLogs bool, args ...string) (string, error) {
 	slog.Debug("pgbackrest", "args", args)
 	return m.backup.BackupExec(tailLogs, append([]string{"pgbackrest"}, args...)...)
+}
+
+// targetActionName returns the human-readable recovery target action.
+func targetActionName(promote bool) string {
+	if promote {
+		return "promote"
+	}
+	return "pause"
 }
 
 // extractLabel extracts the backup label from pgBackRest output.

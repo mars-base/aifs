@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -33,9 +34,19 @@ func Open(ctx context.Context, pgURL, tablePrefix string) (*sql.DB, meta.Metadat
 
 // IsInstanceMounted reports whether another aifs mount is currently holding
 // the advisory lock for this PostgreSQL database.
+//
+// If PostgreSQL is unreachable (container stopped, crashed, or still starting
+// up after a failed restore), there cannot be an active aifs mount -- a mount
+// process also needs a live PG connection to hold the advisory lock. In that
+// case we return (false, nil) rather than an error, so that `aifs restore`
+// can proceed to repair the broken cluster instead of being blocked by a
+// connectivity check that is moot when PG is down.
 func IsInstanceMounted(ctx context.Context, pgURL, tablePrefix string) (bool, error) {
 	db, _, _, err := Open(ctx, pgURL, tablePrefix)
 	if err != nil {
+		if isPGUnreachable(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	defer db.Close()
@@ -58,4 +69,34 @@ func IsInstanceMounted(ctx context.Context, pgURL, tablePrefix string) (bool, er
 	// We acquired the lock just to probe; release it immediately.
 	_, _ = lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", advisoryLockKey)
 	return false, nil
+}
+
+// isPGUnreachable reports whether err represents a PostgreSQL connectivity
+// failure (connection refused, no route, DNS failure, timeout, or the server
+// is still starting up) rather than an application-level error. When PG is
+// unreachable there can be no active aifs mount, so callers treat this as
+// "not mounted" instead of a hard error.
+func isPGUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection refused",
+		"connectex: no connection", // Windows: actively refused
+		"no such host",
+		"no route to host",
+		"network is unreachable",
+		"i/o timeout",
+		"connection reset",
+		"eof",                       // server accepted then closed (starting up)
+		"database system is starting up",
+		"the database system is starting up",
+		"server closed the connection unexpectedly",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }

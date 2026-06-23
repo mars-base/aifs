@@ -83,6 +83,13 @@ Steps:
 			if ready, _ := pm.PGIsReady(); ready {
 				break
 			}
+			// If the container has exited, stop waiting -- PG is not going to
+			// become ready (e.g. a corrupted data directory from a failed
+			// restore). Report the failure immediately so the user knows to
+			// run `aifs restore` instead of waiting out the full timeout.
+			if cs, _ := pm.Status(); cs != nil && !cs.Running && strings.HasPrefix(strings.ToLower(cs.Status), "exited") {
+				return fmt.Errorf("PostgreSQL container exited during startup (status: %s); data directory may be corrupted -- run 'aifs restore -i %s --time \"...\"' to recover", cs.Status, cfg.Instance)
+			}
 			time.Sleep(time.Second)
 		}
 
@@ -99,9 +106,12 @@ Steps:
 			}
 
 			// Install backup public key into the PG container so pgbackrest can SSH in.
+			// This is best-effort during start: if the container is not in a state
+			// that accepts exec sessions yet, we warn instead of failing the whole
+			// start -- the key is only needed for backups, not for running PG.
 			fmt.Println("-> Authorizing backup key on PostgreSQL container...")
 			if err := bm.AuthorizeKeyOnInstance(); err != nil {
-				return fmt.Errorf("authorizing backup key: %w", err)
+				fmt.Printf("  [!] backup key authorization warning: %v\n", err)
 			}
 
 			// Ensure backup infrastructure is ready
