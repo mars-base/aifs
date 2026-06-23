@@ -135,6 +135,9 @@ try {
 vmIdleTimeout=-1
 "@
     $wslConfig | Out-File -FilePath "$env:USERPROFILE\.wslconfig" -Encoding ascii -Force
+    # .wslconfig is only read on WSL VM cold-boot. Shut down any existing
+    # VM so the next wsl command (3b) cold-boots with the new config.
+    wsl --shutdown 2>$null
     Write-Ok ".wslconfig created (vmIdleTimeout=-1)"
 } catch {
     Write-Warn ".wslconfig creation failed: $_"
