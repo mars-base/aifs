@@ -51,8 +51,6 @@ func startPodmanService() {
 		return
 	}
 
-	fmt.Fprintln(os.Stderr, "-> Starting WSL podman service...")
-
 	// Clean stale boot-ID cache from a previous WSL session.
 	cleanCmd := exec.Command("wsl", "-d", distro, "--exec", "sh", "-c",
 		"rm -rf /tmp/storage-run-1000/containers /tmp/storage-run-1000/libpod/tmp 2>/dev/null")
@@ -94,7 +92,6 @@ func startPodmanService() {
 	for i := 0; i < 30; i++ {
 		if tcpServiceListening(distro) {
 			ensurePortproxy(distro)
-			fmt.Fprintf(os.Stderr, "  [OK] podman service ready\n")
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -140,9 +137,7 @@ func ensurePortproxy(distro string) {
 	hideWindow(addCmd)
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [!] portproxy add failed: %v\n%s\n", err, strings.TrimSpace(string(out)))
-		return
 	}
-	fmt.Fprintf(os.Stderr, "  [OK] portproxy: 0.0.0.0:2375 -> %s:2375\n", wslIP)
 }
 
 // getWSLIP returns the IPv4 address of the WSL distro's eth0 interface.
