@@ -132,8 +132,12 @@ Steps:
 			// first-time initdb because the stanza doesn't exist yet.  Set it
 			// now via ALTER SYSTEM and wait for the archiver to process any
 			// pending WAL segments before the first backup can succeed.
+			// PostgreSQL runs the archive_command as the postgres user (uid 999),
+			// which owns the repo (the backup container also runs as postgres,
+			// same host uid via rootless podman subuid), so no sudo/root is
+			// needed.
 			stanza := cfg.PITR.PgBackRestStanza
-			archiveCmd := fmt.Sprintf("sudo -n -u root pgbackrest --stanza=%s archive-push %%p", stanza)
+			archiveCmd := fmt.Sprintf("pgbackrest --stanza=%s archive-push %%p", stanza)
 			setSQL := fmt.Sprintf("ALTER SYSTEM SET archive_command TO '%s'", archiveCmd)
 
 			if _, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", setSQL); err != nil {

@@ -1,4 +1,4 @@
-.PHONY: build run test clean install lint
+.PHONY: build run test clean install lint images image-pg image-backup
 
 # Variables
 BINARY_NAME := aifs
@@ -61,3 +61,40 @@ dev-setup: build
 # Dev: build and run status
 dev-status: build
 	./$(BUILD_DIR)/$(BINARY_NAME) status
+
+# ─── Container images ────────────────────────────────────────────────
+# Tags must match the defaults in internal/config/config.go so that the
+# running aifs binary picks them up via imageExists (no rebuild on start):
+#   PG:     ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0
+#   backup: ghcr.io/mars-base/aifs/aifs-backup:2.58.0
+# Override with: make images PG_TAG=... BACKUP_TAG=...
+PG_TAG     ?= ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0
+BACKUP_TAG ?= ghcr.io/mars-base/aifs/aifs-backup:2.58.0
+EMBED_DIR  := embed
+
+# On rootless Linux podman needs XDG_RUNTIME_DIR to reach the user API socket.
+# On macOS podman runs inside a machine VM and does not need this.
+PODMAN := $(shell command -v podman 2>/dev/null)
+ifeq ($(PODMAN),)
+$(error podman not found in PATH — install it first (run scripts/install.sh))
+endif
+
+# Export XDG_RUNTIME_DIR for rootless Linux only (skip on macOS where it is
+# already set by the login session / not used by the machine VM).
+UNAME_S := $(shell uname -s)
+ifneq ($(UNAME_S),Darwin)
+export XDG_RUNTIME_DIR := $(shell echo $${XDG_RUNTIME_DIR:-/run/user/$$(id -u)})
+endif
+
+# Build the PostgreSQL + pgBackRest image.
+image-pg:
+	$(PODMAN) build -t $(PG_TAG) -f $(EMBED_DIR)/Containerfile $(EMBED_DIR)
+
+# Build the pgBackRest backup image (runs as the postgres user, uid 999).
+image-backup:
+	$(PODMAN) build -t $(BACKUP_TAG) -f $(EMBED_DIR)/backup.Containerfile $(EMBED_DIR)
+
+# Build both container images.
+images: image-pg image-backup
+	@echo "Built images:"
+	@$(PODMAN) images --format '  {{.Repository}}:{{.Tag}}  ({{.Size}})' | grep -E 'aifs-pg|aifs-backup' || true

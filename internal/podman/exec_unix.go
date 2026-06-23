@@ -18,7 +18,7 @@ import (
 // is still returned for error reporting.
 func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Duration) (string, error) {
 	slog.Debug("execWithTimeoutStreaming", "args", args)
-	cmd := exec.Command(podmanPath, args...)
+	cmd := podmanCommand(podmanPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	var stdoutBuf, stderrBuf strings.Builder
@@ -75,7 +75,7 @@ func execWithTimeoutStreaming(podmanPath string, args []string, timeout time.Dur
 // Explicitly kills the process on timeout.
 func execWithTimeout(podmanPath string, args []string, timeout time.Duration) (string, error) {
 	slog.Debug("execWithTimeout", "args", args)
-	cmd := exec.Command(podmanPath, args...)
+	cmd := podmanCommand(podmanPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

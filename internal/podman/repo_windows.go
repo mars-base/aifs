@@ -2,30 +2,24 @@
 
 package podman
 
-import (
-	"fmt"
-	"os/exec"
-)
-
-// EnsureRepoReadable recursively ensures the backup repository is readable by
-// other users. On Windows the repository lives in the WSL ext4 filesystem used
-// by podman, so we must run chmod inside WSL rather than on the Windows side.
+// EnsureRepoReadable is a legacy no-op.
+//
+// Previously the backup container ran pgbackrest as root while the PG container
+// ran archive-get as the postgres user (different host uids under rootless
+// podman in WSL), so repo files written by root were not readable by postgres
+// and had to be chmod-relaxed via `wsl --exec chmod -R a+rX`. That recursive
+// chmod produced a flood of "Operation not permitted" errors (rootless subuid
+// mapping prevents chmod of files owned by another mapped uid) that drowned
+// out the restore log.
+//
+// Now both the backup container and the PG container run pgbackrest as the
+// postgres user (uid 999 -> same host uid via rootless podman subuid mapping),
+// so repo files are owned by postgres and are directly readable/writable. The
+// createBackupContainer step also chowns existing repo files to postgres on
+// every (re)creation.
+//
+// Kept as a no-op for call-site compatibility; callers (pitr.go) ignore its
+// error.
 func (m *BackupManager) EnsureRepoReadable() error {
-	repoDir := m.cfg.Backup.DataDir
-	if repoDir == "" {
-		return nil
-	}
-
-	wslPath := hostMountPath(repoDir)
-	if wslPath == "" {
-		return fmt.Errorf("could not determine WSL path for backup repo %s", repoDir)
-	}
-
-	distro := wslDistro()
-	cmd := exec.Command("wsl", "-d", distro, "--exec", "chmod", "-R", "a+rX", wslPath)
-	hideWindow(cmd)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("chmod backup repo %s (wsl): %w (output: %s)", wslPath, err, string(out))
-	}
 	return nil
 }

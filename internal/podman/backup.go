@@ -32,7 +32,7 @@ type BackupManager struct {
 
 // NewBackupManager creates a BackupManager.
 func NewBackupManager(cfg *config.Config) (*BackupManager, error) {
-	path, err := exec.LookPath("podman")
+	path, err := findPodman()
 	if err != nil {
 		return nil, fmt.Errorf("podman is not installed: %w", err)
 	}
@@ -91,7 +91,7 @@ func (m *BackupManager) WriteSSHConfig() (string, error) {
 		fmt.Fprintf(&sb, "    HostName %s\n", hostName)
 		sb.WriteString("    StrictHostKeyChecking no\n")
 		sb.WriteString("    UserKnownHostsFile /dev/null\n")
-		sb.WriteString("    IdentityFile /root/.ssh/id_rsa\n")
+		sb.WriteString("    IdentityFile /home/postgres/.ssh/id_rsa\n")
 		sb.WriteString("    User postgres\n")
 		fmt.Fprintf(&sb, "    Port %d\n\n", sshPort)
 	}
@@ -122,7 +122,6 @@ func (m *BackupManager) EnsureSSHKey() (*SSHKeyPair, error) {
 	if runtime.GOOS == "windows" {
 		wslPriv := wslNativePath(keys.Private)
 		testCmd := exec.Command("wsl", "-d", wslDistro(), "--exec", "test", "-f", wslPriv)
-		hideWindow(testCmd)
 		if _, err := testCmd.Output(); err == nil {
 			return &keys, nil
 		}
@@ -492,8 +491,7 @@ func (m *BackupManager) BackupExec(tailLogs bool, args ...string) (string, error
 
 func (m *BackupManager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
-	cmd := exec.Command(m.podman, args...)
-	hideWindow(cmd)
+	cmd := podmanCommand(m.podman, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -506,8 +504,7 @@ func (m *BackupManager) run(args ...string) (string, error) {
 
 func (m *BackupManager) runInteractive(args ...string) error {
 	slog.Debug("podman", "args", args)
-	cmd := exec.Command(m.podman, args...)
-	hideWindow(cmd)
+	cmd := podmanCommand(m.podman, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -576,14 +573,33 @@ func (m *BackupManager) createBackupContainer(confPath string) error {
 		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(m.cfg.Backup.DataDir)),
 		"-v", fmt.Sprintf("%s:/var/log/pgbackrest", hostMountPath(m.cfg.Backup.LogDir)),
 		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
-		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa:ro", hostMountPath(keys.Private)),
-		"-v", fmt.Sprintf("%s:/root/.ssh/id_rsa.pub:ro", hostMountPath(keys.Public)),
-		"-v", fmt.Sprintf("%s:/root/.ssh/config:ro", hostMountPath(sshConfPath)),
+		// SSH keys are mounted writable (not :ro) so the ownership-migration
+		// step below can chown them to postgres; the container runs as postgres
+		// and needs to own its private key for ssh to accept it.
+		"-v", fmt.Sprintf("%s:/home/postgres/.ssh/id_rsa", hostMountPath(keys.Private)),
+		"-v", fmt.Sprintf("%s:/home/postgres/.ssh/id_rsa.pub", hostMountPath(keys.Public)),
+		"-v", fmt.Sprintf("%s:/home/postgres/.ssh/config", hostMountPath(sshConfPath)),
 		m.cfg.Backup.ImageTag,
 	)
 
 	if _, err := m.run(args...); err != nil {
 		return fmt.Errorf("creating backup container: %w", err)
+	}
+
+	// Migrate repo/key ownership to the postgres user. Existing repo files were
+	// written by root (container root -> host uid 1000); the container now runs
+	// as postgres (uid 999 -> host 100998 via rootless podman subuid), which is
+	// a different host uid and cannot write 1000-owned files. The mounted SSH
+	// private key is likewise owned by 1000, which postgres cannot read.
+	// Running chown as root inside the container (host uid 1000, owner of the
+	// files) fixes both: repo and keys become postgres-owned. Idempotent and
+	// cheap, so it is safe to run on every container (re)creation.
+	chownArgs := []string{"exec", "-u", "root", m.cfg.Backup.ContainerName,
+		"sh", "-c",
+		"chown -R postgres:postgres /var/lib/pgbackrest /var/log/pgbackrest " +
+				"/home/postgres/.ssh/id_rsa /home/postgres/.ssh/id_rsa.pub"}
+	if _, err := m.run(chownArgs...); err != nil {
+		fmt.Printf("  [!] ownership migration to postgres: %v\n", err)
 	}
 
 	fmt.Println("  [OK] Backup container started")

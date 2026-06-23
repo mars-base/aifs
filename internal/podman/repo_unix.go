@@ -2,32 +2,19 @@
 
 package podman
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-)
-
-// EnsureRepoReadable recursively ensures the backup repository is readable by
-// other users. This is required because the PostgreSQL container runs archive-get
-// as the postgres user (different host UID than the backup container root).
+// EnsureRepoReadable is a legacy no-op.
+//
+// Previously the backup container ran pgbackrest as root while the PG container
+// ran archive-get as the postgres user (different host uids under rootless
+// podman), so repo files written by root were not readable by postgres and had
+// to be chmod-relaxed. Now both the backup container and the PG container run
+// pgbackrest as the postgres user (uid 999 -> same host uid via rootless podman
+// subuid mapping), so repo files are owned by postgres and are directly
+// readable/writable. The createBackupContainer step also chowns existing repo
+// files to postgres on every (re)creation.
+//
+// Kept as a no-op for call-site compatibility; callers (pitr.go) ignore its
+// error.
 func (m *BackupManager) EnsureRepoReadable() error {
-	repoDir := m.cfg.Backup.DataDir
-	if repoDir == "" {
-		return nil
-	}
-
-	if err := os.Chmod(repoDir, 0755); err != nil {
-		return fmt.Errorf("chmod backup repo %s: %w", repoDir, err)
-	}
-
-	return filepath.Walk(repoDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return os.Chmod(path, info.Mode()|0555)
-		}
-		return os.Chmod(path, info.Mode()|0444)
-	})
+	return nil
 }

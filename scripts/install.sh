@@ -42,8 +42,18 @@ esac
 has_homebrew()      { command -v brew >/dev/null 2>&1; }
 has_podman()        { command -v podman >/dev/null 2>&1; }
 has_podman_machine() {
-  # podman machine list exits non-zero when no machine is configured
+  # podman machine list exits non-zero when no machine is configured.
+  # On macOS podman runs inside a VM, so we also require the machine to be
+  # (or have been) started; a configured-but-stopped machine still lists OK.
   command -v podman >/dev/null 2>&1 && podman machine list >/dev/null 2>&1
+}
+podman_machine_running() {
+  # `podman machine list` prints "Currently running" for the active VM.
+  command -v podman >/dev/null 2>&1 || return 1
+  podman machine list 2>/dev/null | grep -qi "currently running"
+}
+is_apple_silicon() {
+  [ "$(uname -m)" = "arm64" ]
 }
 has_macfuse_kext() {
   # Check if macFUSE kernel extension is loaded
@@ -60,45 +70,100 @@ has_fusermount() {
   command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1
 }
 
-# Detect Linux distribution for package manager hints
+# Detect the Linux distribution family for distro-specific package names.
+# Echoes a normalized family token that install_pkgs / package-name maps can
+# case on. Reads /etc/os-release ($ID and $ID_LIKE) so that derivatives
+# (rocky, almalinux, opensuse-tumbleweed, ...) resolve to their base family.
+# Falls back to probing the package manager binary when os-release is absent.
 detect_linux_distro() {
   if [ -f /etc/os-release ]; then
     . /etc/os-release
-    echo "$ID"
-  elif command -v apt-get >/dev/null 2>&1; then
-    echo "debian"
-  elif command -v dnf >/dev/null 2>&1; then
-    echo "fedora"
-  elif command -v pacman >/dev/null 2>&1; then
-    echo "arch"
+    # First try the concrete distro $ID.
+    case "${ID:-}" in
+      ubuntu|linuxmint|pop|kali|raspbian|debian) echo "debian"; return 0 ;;
+      fedora)                                    echo "fedora"; return 0 ;;
+      rhel|centos|rocky|almalinux|ol|cloudlinux) echo "rhel";   return 0 ;;
+      arch|manjaro|garuda|endeavouros|cachyos)   echo "arch";   return 0 ;;
+      alpine)                                    echo "alpine"; return 0 ;;
+      opensuse*|sles|sle-micro|suse)             echo "suse";   return 0 ;;
+    esac
+    # Derivatives: walk $ID_LIKE for an ancestor family.
+    for _like in ${ID_LIKE:-}; do
+      case "$_like" in
+        debian|ubuntu)      echo "debian"; return 0 ;;
+        rhel|fedora|centos) echo "rhel";   return 0 ;;
+        arch)               echo "arch";   return 0 ;;
+        suse|opensuse)      echo "suse";   return 0 ;;
+        alpine)             echo "alpine"; return 0 ;;
+      esac
+    done
+  fi
+  # Last resort: detect by available package manager binary.
+  for _pm in apt-get dnf yum zypper pacman apk; do
+    if command -v "$_pm" >/dev/null 2>&1; then
+      case "$_pm" in
+        apt-get) echo "debian" ;;
+        dnf|yum) echo "rhel" ;;
+        zypper)  echo "suse" ;;
+        pacman)  echo "arch" ;;
+        apk)     echo "alpine" ;;
+      esac
+      return 0
+    fi
+  done
+  echo "unknown"
+}
+
+# Detect the system package manager binary to use for installs.
+# Echoes the binary name (apt-get|dnf|yum|zypper|pacman|apk) or empty.
+# Probes by binary availability rather than distro name so that older RHEL 7
+# (yum only) and newer RHEL 9+ (dnf) are both handled, regardless of $ID.
+detect_pkg_manager() {
+  DISTRO="$(detect_linux_distro)"
+  case "$DISTRO" in
+    debian)
+      command -v apt-get >/dev/null 2>&1 && { echo apt-get; return 0; } ;;
+    fedora|rhel)
+      command -v dnf >/dev/null 2>&1 && { echo dnf; return 0; }
+      command -v yum >/dev/null 2>&1 && { echo yum; return 0; } ;;
+    arch)
+      command -v pacman >/dev/null 2>&1 && { echo pacman; return 0; } ;;
+    alpine)
+      command -v apk >/dev/null 2>&1 && { echo apk; return 0; } ;;
+    suse)
+      command -v zypper >/dev/null 2>&1 && { echo zypper; return 0; } ;;
+  esac
+  # Fallback: probe any known manager regardless of detected distro.
+  for _pm in apt-get dnf yum zypper pacman apk; do
+    command -v "$_pm" >/dev/null 2>&1 && { echo "$_pm"; return 0; }
+  done
+  echo ""
+}
+
+# Run a command with root privileges if needed. If we are already root, run
+# directly; otherwise prefix sudo. Avoids "sudo: not found" / password prompts
+# when the installer is run as root (e.g. inside a container).
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
   else
-    echo "unknown"
+    sudo "$@"
   fi
 }
 
-# auto_install_pkg tries to install a package with the system package manager.
-# Returns 0 on success, 1 on failure (unknown distro / install error).
-auto_install_pkg() {
-  DISTRO="$(detect_linux_distro)"
-  case "$DISTRO" in
-    ubuntu|debian)
-      sudo apt-get update && sudo apt-get install -y "$@"
-      ;;
-    fedora|rhel|centos|rocky|almalinux)
-      sudo dnf install -y "$@"
-      ;;
-    arch|manjaro)
-      sudo pacman -S --noconfirm "$@"
-      ;;
-    alpine)
-      sudo apk add "$@"
-      ;;
-    opensuse*|sles)
-      sudo zypper install -y "$@"
-      ;;
-    *)
-      return 1
-      ;;
+# install_pkgs installs one or more packages via the detected package manager.
+# Returns 0 on success, 1 if no package manager was found or install failed.
+install_pkgs() {
+  PM="$(detect_pkg_manager)"
+  [ -z "$PM" ] && return 1
+  case "$PM" in
+    apt-get) as_root apt-get update && as_root apt-get install -y "$@" ;;
+    dnf)     as_root dnf install -y "$@" ;;
+    yum)     as_root yum install -y "$@" ;;
+    zypper)  as_root zypper install -y "$@" ;;
+    pacman)  as_root pacman -S --noconfirm --needed "$@" ;;
+    apk)     as_root apk add --no-cache "$@" ;;
+    *)       return 1 ;;
   esac
 }
 
@@ -162,7 +227,17 @@ if $IS_MACOS; then
 
   # --- Podman Machine ---
   if has_podman_machine; then
-    ok "Podman machine is configured and running"
+    if podman_machine_running; then
+      ok "Podman machine is configured and running"
+    else
+      warn "Podman machine is configured but not running — starting..."
+      podman machine start
+      if podman_machine_running; then
+        ok "Podman machine started"
+      else
+        warn "Podman machine did not report running; run 'podman machine start' manually"
+      fi
+    fi
   else
     warn "Podman machine not initialized — creating VM..."
     info "This will download a VM image and may take a few minutes."
@@ -196,28 +271,62 @@ if $IS_MACOS; then
       echo "  1. Open ${BOLD}System Settings → Privacy & Security${RESET}"
       echo "  2. Approve the macFUSE extension from the developer"
       echo "  3. ${BOLD}Reboot your Mac${RESET} for the change to take effect"
+      if is_apple_silicon; then
+        echo ""
+        info "Apple Silicon note: macFUSE requires the boot volume to use a"
+        info "${BOLD}Reduced Security${RESET} policy. In Recovery mode, run"
+        info "'Startup Security Utility → Set Security Policy → Reduced Security',"
+        info "enable 'Allow user management of kernel extensions', then reboot."
+      fi
       echo ""
     fi
   fi
 
 elif $IS_LINUX; then
-  # ── Linux dependencies ─────────────────────────────────────────
+  # -- Linux dependencies -------------------------------------------------
 
   step "Checking Linux dependencies..."
 
-  # --- Podman ---
+  # Ensure ~/.local/bin exists and is on PATH.
+  LOCAL_BIN="$HOME/.local/bin"
+  if [ ! -d "$LOCAL_BIN" ]; then
+    mkdir -p "$LOCAL_BIN" && info "Created $LOCAL_BIN"
+  fi
+  case ":$PATH:" in
+    *:"$LOCAL_BIN":*) ;;
+    *)
+      warn "$LOCAL_BIN is not on your PATH"
+      info "Add this to your shell profile (~/.bashrc / ~/.zshrc):"
+      info "  export PATH="\$HOME/.local/bin:\$PATH""
+      ;;
+  esac
+
+  # --- Podman (static podman-launcher from GitHub) ---
+  PODMAN_URL="https://github.com/89luca89/podman-launcher/releases/latest/download/podman-launcher-amd64"
+  PODMAN_BIN="$LOCAL_BIN/podman"
+
   if has_podman; then
     PODMAN_VER="$(podman --version 2>/dev/null || echo 'unknown')"
     ok "Podman found ($PODMAN_VER)"
   else
-    warn "Podman not found — installing..."
-    if auto_install_pkg podman; then
-      ok "Podman installed"
+    warn "Podman not found -- downloading static podman-launcher from GitHub..."
+    info "$PODMAN_URL"
+    if curl -fsSL -o "$PODMAN_BIN" "$PODMAN_URL"; then
+      chmod +x "$PODMAN_BIN"
+      ok "Podman installed to $PODMAN_BIN ($(podman --version 2>/dev/null || echo 'ok'))"
     else
-      warn "Could not auto-install podman (unknown distro)"
-      cmd_hint "Install podman via your system package manager"
-      cmd_hint "Or: curl -fsSL -o ~/.local/bin/podman https://github.com/89luca89/podman-launcher/releases/latest/download/podman-launcher-amd64 && chmod +x ~/.local/bin/podman"
-      die "Please install Podman, then re-run this script."
+      die "Failed to download podman-launcher. Check network and retry."
+    fi
+  fi
+
+  # podman-launcher needs newuidmap/newgidmap from the uidmap package.
+  if ! command -v newuidmap >/dev/null 2>&1; then
+    warn "newuidmap not found -- needed for rootless user namespace mapping, installing..."
+    if install_pkgs uidmap; then
+      ok "uidmap installed"
+    else
+      cmd_hint "Install the uidmap package for your distro, then re-run this script"
+      die "uidmap (newuidmap/newgidmap) is required for rootless podman"
     fi
   fi
 
@@ -227,21 +336,22 @@ elif $IS_LINUX; then
     ok "FUSE umount helper found: ${FUSE_BIN}"
   else
     warn "fusermount3 not found — needed for 'aifs umount', installing..."
-    # Distro-specific package names for fuse3
+    # Distro-specific package names for the fuse3 userspace helper.
+    # detect_linux_distro normalizes derivatives to a family token.
     DISTRO="$(detect_linux_distro)"
     case "$DISTRO" in
-      ubuntu|debian)       PKG="fuse3" ;;
-      fedora|rhel|centos|rocky|almalinux) PKG="fuse3-libs" ;;
-      arch|manjaro)         PKG="fuse3" ;;
-      alpine)               PKG="fuse3" ;;
-      opensuse*|sles)       PKG="fuse3" ;;
-      *)                    PKG="" ;;
+      debian)   PKG="fuse3" ;;
+      fedora|rhel) PKG="fuse3" ;;   # fuse3 + fuse3-libs pulled in as deps
+      arch)     PKG="fuse3" ;;
+      alpine)   PKG="fuse3" ;;
+      suse)     PKG="fuse3" ;;
+      *)        PKG="fuse3" ;;       # sensible default; install_pkgs will fail cleanly
     esac
-    if [ -n "$PKG" ] && auto_install_pkg "$PKG"; then
+    if install_pkgs "$PKG"; then
       ok "fuse3 installed ($PKG)"
     else
-      warn "Could not auto-install fuse3"
-      [ -n "$PKG" ] && cmd_hint "sudo apt-get install -y fuse3 (or equivalent for your distro)"
+      warn "Could not auto-install $PKG"
+      cmd_hint "Install the fuse3 package for your distro (e.g. 'fuse3' on Debian/Arch, 'fuse3-libs' on RHEL)"
       warn "'aifs umount' will not work without fusermount3/fusermount"
     fi
   fi

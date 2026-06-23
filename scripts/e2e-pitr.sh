@@ -1,8 +1,8 @@
 #!/bin/bash
-# test-pitr.sh — End-to-end PITR test for aifs.
+# e2e-pitr.sh — End-to-end PITR test for aifs.
 #
 # Usage:
-#   ./scripts/test-pitr.sh [instance_name]
+#   ./scripts/e2e-pitr.sh [instance_name]
 #
 # Environment:
 #   AIFS_BIN    path to aifs binary (default: ./build/aifs)
@@ -142,20 +142,29 @@ echo "→ Taking full backup..."
 
 echo "→ Starting background writer (1 row/sec)..."
 local_writer_script=$(cat <<'EOF'
-for i in $(seq 1 300); do
-    psql -U aifs -d "${DB}" -c "INSERT INTO restore_test(note) VALUES ('post_'||$i);" >/dev/null 2>&1 || true
-    sleep 1
-done
+	for i in $(seq 1 300); do
+	    psql -U aifs -d "${DB}" -c "INSERT INTO restore_test(note) VALUES ('post_'||$i);" >/dev/null 2>&1 || true
+	    sleep 1
+	done
 EOF
 )
 podman exec -d "${CONTAINER}" bash -c "DB=${DB}; ${local_writer_script}"
 
-echo "→ Waiting ${WRITE_SECONDS}s to reach target restore time..."
-sleep "${WRITE_SECONDS}"
-TARGET_TIME_UTC=$(date -u '+%Y-%m-%d %H:%M:%S+00')
-echo "  Target restore time (UTC): ${TARGET_TIME_UTC}"
+# Record an earlier target time for the cross-time restore test.
+EARLY_SECONDS=15
+echo "→ Waiting ${EARLY_SECONDS}s to record early target time..."
+sleep "${EARLY_SECONDS}"
+TARGET_TIME_EARLY=$(date -u '+%Y-%m-%d %H:%M:%S+00')
+EXPECTED_ROWS_EARLY=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT count(*) FROM restore_test WHERE t < '${TARGET_TIME_EARLY}';" | xargs)
+echo "  Early target (UTC): ${TARGET_TIME_EARLY}  → ${EXPECTED_ROWS_EARLY} rows"
 
-echo "→ Counting rows before target time..."
+REMAIN_SECONDS=$((WRITE_SECONDS - EARLY_SECONDS))
+echo "→ Waiting ${REMAIN_SECONDS}s more to reach primary target time..."
+sleep "${REMAIN_SECONDS}"
+TARGET_TIME_UTC=$(date -u '+%Y-%m-%d %H:%M:%S+00')
+echo "  Primary target (UTC): ${TARGET_TIME_UTC}"
+
+echo "→ Counting rows before primary target time..."
 EXPECTED_ROWS=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT count(*) FROM restore_test WHERE t < '${TARGET_TIME_UTC}';" | xargs)
 echo "  Expected rows after restore: ${EXPECTED_ROWS}"
 
@@ -169,31 +178,96 @@ echo "→ Final row count before restore:"
 FINAL_ROWS=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT count(*) FROM restore_test;" | xargs)
 echo "  ${FINAL_ROWS}"
 
-echo "→ Restoring to ${TARGET_TIME_UTC}..."
+echo ""
+echo "=== Test 1: pause restore to primary target ==="
+echo "→ Restoring to ${TARGET_TIME_UTC} (pause mode)..."
 "$AIFS_BIN" -c "$CONFIG" restore -i "${INSTANCE}" --time "${TARGET_TIME_UTC}" --force
 
 echo "→ Waiting for PostgreSQL to be ready..."
 sleep 5
 
-echo "→ Verifying restored row count..."
 RESTORED_ROWS=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT count(*) FROM restore_test;" | xargs)
 RESTORED_MAX_T=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT max(t) FROM restore_test;" | xargs)
 
-echo ""
-echo "=== Results ==="
-echo "  Instance:           ${INSTANCE}"
-echo "  Target time (UTC):  ${TARGET_TIME_UTC}"
-echo "  Expected rows:      ${EXPECTED_ROWS}"
-echo "  Final rows:         ${FINAL_ROWS}"
-echo "  Restored rows:      ${RESTORED_ROWS}"
-echo "  Restored max(t):    ${RESTORED_MAX_T}"
+echo "  Restored rows: ${RESTORED_ROWS} (expected ${EXPECTED_ROWS})"
+echo "  Restored max(t): ${RESTORED_MAX_T}"
 
-if [[ "${RESTORED_ROWS}" == "${EXPECTED_ROWS}" ]]; then
+if [[ "${RESTORED_ROWS}" != "${EXPECTED_ROWS}" ]]; then
     echo ""
-    echo "✓ PITR test PASSED"
+    echo "✗ PITR test FAILED: pause restore row count ${RESTORED_ROWS} != expected ${EXPECTED_ROWS}"
+    exit 1
+fi
+echo "✓ pause restore PASSED"
+
+echo ""
+echo "=== Test 2: promote at same target time (fast path, skip re-restore) ==="
+echo "→ Promoting to ${TARGET_TIME_UTC} (same time, --promote)..."
+PROMOTE_OUT=$("$AIFS_BIN" -c "$CONFIG" restore -i "${INSTANCE}" --time "${TARGET_TIME_UTC}" --promote --force 2>&1)
+echo "${PROMOTE_OUT}"
+
+# Fast path must NOT re-run a full restore.
+if echo "${PROMOTE_OUT}" | grep -q "promoting directly"; then
+    echo "✓ fast path detected (skip re-restore)"
+else
+    echo "✗ fast path NOT taken — expected 'promoting directly' message"
+    exit 1
+fi
+
+sleep 5
+
+# Verify cluster is now read-write by inserting a row.
+echo "→ Verifying cluster is read-write..."
+podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -c "INSERT INTO restore_test(note) VALUES ('promoted');" >/dev/null 2>&1
+INSERT_RESULT=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT count(*) FROM restore_test;" | xargs)
+echo "  Row count after insert: ${INSERT_RESULT} (was ${RESTORED_ROWS})"
+if [[ "${INSERT_RESULT}" -gt "${RESTORED_ROWS}" ]]; then
+    echo "✓ cluster is read-write after promote"
+else
+    echo "✗ cluster still read-only or insert failed"
+    exit 1
+fi
+RW_ROWS="${INSERT_RESULT}"
+
+echo ""
+echo "=== Test 3: cross-time promote (full restore, different time) ==="
+echo "→ Restoring to ${TARGET_TIME_EARLY} (different time, --promote)..."
+CROSS_OUT=$("$AIFS_BIN" -c "$CONFIG" restore -i "${INSTANCE}" --time "${TARGET_TIME_EARLY}" --promote --force 2>&1)
+echo "${CROSS_OUT}"
+
+# Cross-time restore MUST do a full restore (not fast path).
+if echo "${CROSS_OUT}" | grep -q "promoting directly"; then
+    echo "✗ took fast path for different time — should have done full restore"
+    exit 1
+fi
+if echo "${CROSS_OUT}" | grep -q "3/3 Starting PostgreSQL"; then
+    echo "✓ full restore detected (re-wipe + re-restore + replay)"
+else
+    echo "✗ expected full restore steps (1/3 .. 2/3 .. 3/3)"
+    exit 1
+fi
+
+sleep 5
+
+CROSS_ROWS=$(podman exec "${CONTAINER}" psql -U aifs -d "${DB}" -t -c "SELECT count(*) FROM restore_test;" | xargs)
+echo "  Restored rows: ${CROSS_ROWS} (expected ~${EXPECTED_ROWS_EARLY})"
+
+echo ""
+echo "=== All results ==="
+echo "  Primary target (UTC):    ${TARGET_TIME_UTC}"
+echo "  Early target (UTC):      ${TARGET_TIME_EARLY}"
+echo "  Final rows (all writes): ${FINAL_ROWS}"
+echo "  ─────────────────────────────────────"
+echo "  Test 1 pause-restore:     ${RESTORED_ROWS} rows (expected ${EXPECTED_ROWS})"
+echo "  Test 2 same-time promote: ${RW_ROWS} rows (was ${RESTORED_ROWS}+1 inserted)"
+echo "  Test 3 cross-time promote: ${CROSS_ROWS} rows (expected ~${EXPECTED_ROWS_EARLY})"
+
+# Cross-time should have fewer rows than the primary target.
+if [[ "${CROSS_ROWS}" -lt "${RESTORED_ROWS}" ]] && [[ "${CROSS_ROWS}" -ge "${EXPECTED_ROWS_EARLY}" ]]; then
+    echo ""
+    echo "✓ PITR test PASSED (all 3 phases)"
     exit 0
 else
     echo ""
-    echo "✗ PITR test FAILED: restored row count ${RESTORED_ROWS} != expected ${EXPECTED_ROWS}"
+    echo "✗ PITR test FAILED: cross-time rows ${CROSS_ROWS} — expected < ${RESTORED_ROWS} and >= ${EXPECTED_ROWS_EARLY}"
     exit 1
 fi

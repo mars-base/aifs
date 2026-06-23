@@ -25,9 +25,59 @@ type Manager struct {
 	dataDir string // aifs data directory (~/.aifs)
 }
 
+var (
+	cachedPodmanPath string
+)
+
+// findPodman returns the path to the podman binary.
+// On Linux it prefers ~/.local/bin/podman (installed by install.sh via
+// podman-launcher), falling back to PATH. On other platforms it uses
+// exec.LookPath.
+func findPodman() (string, error) {
+	if cachedPodmanPath != "" {
+		return cachedPodmanPath, nil
+	}
+	// Prefer the static podman-launcher wrapper bundled by install.sh.
+	if runtime.GOOS == "linux" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			p := filepath.Join(home, ".local", "bin", "podman")
+			if fi, e := os.Stat(p); e == nil && !fi.IsDir() {
+				cachedPodmanPath = p
+				return p, nil
+			}
+		}
+	}
+	p, err := exec.LookPath("podman")
+	if err != nil {
+		return "", err
+	}
+	cachedPodmanPath = p
+	return p, nil
+}
+
+// podmanCommand creates an *exec.Cmd for the podman binary with the given
+// arguments. On Linux it sets XDG_RUNTIME_DIR in the environment so rootless
+// podman can reach the user API socket. On Windows it suppresses console
+// windows. Use this instead of exec.Command directly for all podman
+// invocations.
+func podmanCommand(podmanPath string, args ...string) *exec.Cmd {
+	cmd := exec.Command(podmanPath, args...)
+	hideWindow(cmd)
+	if runtime.GOOS == "linux" {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		if os.Getenv("XDG_RUNTIME_DIR") == "" {
+			cmd.Env = append(cmd.Env, "XDG_RUNTIME_DIR=/run/user/"+fmt.Sprint(os.Getuid()))
+		}
+	}
+	return cmd
+}
+
 // New creates a Podman manager.
 func New(cfg *config.Config) (*Manager, error) {
-	path, err := exec.LookPath("podman")
+	path, err := findPodman()
 	if err != nil {
 		return nil, fmt.Errorf("podman is not installed: %w", err)
 	}
@@ -375,7 +425,7 @@ func (m *Manager) DestroyWithData(cleanData bool) error {
 		repo := m.cfg.Backup.DataDir
 		for _, sub := range []string{"backup", "archive"} {
 			p := filepath.Join(repo, sub, stanza)
-			if err := os.RemoveAll(p); err != nil {
+			if err := removeHostDir(m.podman, p); err != nil {
 				return fmt.Errorf("removing repo %s directory %s: %w", sub, p, err)
 			}
 		}
@@ -404,11 +454,10 @@ func removeHostDir(podmanPath, dir string) error {
 		return fmt.Errorf("cannot determine parent of %s", dir)
 	}
 
-	cmd := exec.Command(podmanPath, "run", "--rm",
+	cmd := podmanCommand(podmanPath, "run", "--rm",
 		"-v", fmt.Sprintf("%s:/target", hostMountPath(parent)),
 		"alpine:3.20", "sh", "-c", fmt.Sprintf("rm -rf /target/%s", base),
 	)
-	hideWindow(cmd)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
@@ -420,6 +469,47 @@ func removeHostDir(podmanPath, dir string) error {
 // host pg_isready binary may not be available.
 func (m *Manager) PGIsReady() (bool, error) {
 	return m.pgIsReadyContainer()
+}
+
+// PGIsPausedInRecovery returns true when PostgreSQL is in a paused recovery
+// state (recovery_target_action=pause), meaning WAL replay has been suspended
+// at the target time and the cluster is read-only. In this state a simple
+// pg_wal_replay_resume() is enough to promote — a full re-restore is wasteful.
+func (m *Manager) PGIsPausedInRecovery() (bool, error) {
+	out, err := m.Exec("psql", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database,
+		"-tAc", "SELECT pg_is_wal_replay_paused()")
+	if err != nil {
+		return false, nil // PG may be down or not in recovery
+	}
+	return strings.TrimSpace(out) == "t", nil
+}
+
+// PGPromoteAfterRecovery resumes WAL replay from a paused recovery state,
+// promoting the cluster to a new timeline and making it read-write.
+// Equivalent to pg_wal_replay_resume() in psql.
+func (m *Manager) PGPromoteAfterRecovery() (string, error) {
+	return m.Exec("psql", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database,
+		"-tAc", "SELECT pg_wal_replay_resume()")
+}
+
+// PGLastXactReplayTimestamp returns the commit timestamp of the last
+// transaction replayed during recovery, or a zero time if no transaction
+// has been replayed yet.  Only meaningful when pg_is_in_recovery() = true.
+func (m *Manager) PGLastXactReplayTimestamp() (time.Time, error) {
+	out, err := m.Exec("psql", "-U", m.cfg.Postgres.User, "-d", m.cfg.Postgres.Database,
+		"-tAc", "SELECT pg_last_xact_replay_timestamp()")
+	if err != nil {
+		return time.Time{}, err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse("2006-01-02 15:04:05.999999-07", out)
+	if err != nil {
+		return time.Time{}, nil // treat unparseable as unknown
+	}
+	return t, nil
 }
 
 // pgIsReadyContainer checks PG readiness via podman exec inside the container.
@@ -484,8 +574,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, promote, tailLogs b
 	// We use the name prefix to match containers that belong to this instance
 	// but were left behind by a killed/crashed process.
 	orphanPrefix := "aifs-restore-" + m.cfg.Podman.ContainerName + "-"
-	rmOrphans := exec.Command(m.podman, "ps", "-a", "--filter", "name="+orphanPrefix, "-q")
-	hideWindow(rmOrphans)
+	rmOrphans := podmanCommand(m.podman, "ps", "-a", "--filter", "name="+orphanPrefix, "-q")
 	if out, err := rmOrphans.Output(); err == nil {
 		for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			id = strings.TrimSpace(id)
@@ -512,7 +601,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, promote, tailLogs b
 	// glob mismatches, or skip files held open. pgBackRest restore (without
 	// --delta) requires an empty target directory; deleting and recreating it
 	// guarantees a clean slate regardless of prior promote/timeline state.
-	wipe := exec.Command(m.podman, "run", "--rm",
+	wipe := podmanCommand(m.podman, "run", "--rm",
 		"-u", "root",
 		"--name", restoreName+"-wipe",
 		"--network", "host",
@@ -520,7 +609,6 @@ func (m *Manager) RunRestoreContainer(stanza, target string, promote, tailLogs b
 		m.cfg.Podman.ImageTag,
 		"sh", "-c", "rm -rf /var/lib/postgresql/data && mkdir -p /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data",
 	)
-	hideWindow(wipe)
 	if err := wipe.Run(); err != nil {
 		return "", fmt.Errorf("wiping data directory before restore: %w", err)
 	}
@@ -550,8 +638,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, promote, tailLogs b
 
 	// Run without timeout -- restore can take a long time for large databases.
 	slog.Debug("podman", "args", args)
-	cmd := exec.Command(m.podman, args...)
-	hideWindow(cmd)
+	cmd := podmanCommand(m.podman, args...)
 
 	var stdoutBuf, stderrBuf strings.Builder
 	if tailLogs {
@@ -590,8 +677,7 @@ func (m *Manager) RunRestoreContainer(stanza, target string, promote, tailLogs b
 
 func (m *Manager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
-	cmd := exec.Command(m.podman, args...)
-	hideWindow(cmd)
+	cmd := podmanCommand(m.podman, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -604,8 +690,7 @@ func (m *Manager) run(args ...string) (string, error) {
 
 func (m *Manager) runInteractive(args ...string) error {
 	slog.Debug("podman", "args", args)
-	cmd := exec.Command(m.podman, args...)
-	hideWindow(cmd)
+	cmd := podmanCommand(m.podman, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

@@ -142,6 +142,9 @@ echo "  ✓ pre-backup files written"
 echo ""
 echo "=== 6. take full snapshot ==="
 "$AIFS_BIN" -c "$CONFIG" snapshot create -i "$INSTANCE" --type full --tail-logs
+# Record a timestamp right after the backup for the cross-time restore test.
+# At this point only pre-backup files exist — no post-backup writes yet.
+TARGET_EARLY=$(date -u '+%Y-%m-%d %H:%M:%S+00')
 
 echo ""
 echo "=== 7. write post-backup files ==="
@@ -172,7 +175,7 @@ echo "=== 9. umount before restore ==="
 "$AIFS_BIN" -c "$CONFIG" umount "$MOUNT_POINT"
 
 echo ""
-echo "=== 10. restore to ${TARGET_TIME_UTC} ==="
+echo "=== 10. pause restore to ${TARGET_TIME_UTC} ==="
 "$AIFS_BIN" -c "$CONFIG" restore -i "$INSTANCE" --time "$TARGET_TIME_UTC" --force
 
 echo ""
@@ -213,4 +216,73 @@ echo "=== 13. verify file-level rollback ==="
 echo "  ✓ pre-target files preserved, post-target files rolled back"
 
 echo ""
-echo "✓ aifs filesystem PITR end-to-end test completed successfully"
+echo "=== 14. umount before promote ==="
+"$AIFS_BIN" -c "$CONFIG" umount "$MOUNT_POINT"
+
+echo ""
+echo "=== 15. promote at same target time (fast path) ==="
+PROMOTE_OUT=$("$AIFS_BIN" -c "$CONFIG" restore -i "$INSTANCE" --time "$TARGET_TIME_UTC" --promote --force 2>&1)
+echo "${PROMOTE_OUT}"
+if echo "${PROMOTE_OUT}" | grep -q "promoting directly"; then
+    echo "  ✓ fast path detected (skip re-restore)"
+else
+    fail "fast path NOT taken — expected 'promoting directly' message"
+fi
+
+sleep 5
+
+echo ""
+echo "=== 16. remount and verify read-write after promote ==="
+"$AIFS_BIN" -c "$CONFIG" mount -i "$INSTANCE" "$MOUNT_POINT" -d
+sleep 2
+
+# Files must still be there.
+[[ -f "$MOUNT_POINT/file-before.txt" ]] || fail "file-before.txt missing after promote"
+[[ -f "$MOUNT_POINT/file-after.txt" ]] || fail "file-after.txt missing after promote"
+
+# Write a new file to confirm the filesystem is read-write.
+echo "promoted write" > "$MOUNT_POINT/promoted.txt"
+[[ "$(cat "$MOUNT_POINT/promoted.txt")" == "promoted write" ]] || fail "write after promote failed"
+echo "  ✓ filesystem read-write after promote, files intact"
+
+echo ""
+echo "=== 17. umount before cross-time restore ==="
+"$AIFS_BIN" -c "$CONFIG" umount "$MOUNT_POINT"
+
+# Record an earlier target time right before the backup (no post-backup files yet).
+# We use the backup timestamp from the snapshot output.
+echo ""
+echo "=== 18. cross-time restore (full restore, time just after backup) ==="
+# Target: 3 seconds after TARGET_EARLY (just after backup), so only pre-backup
+# and the earliest post-backup files exist.
+EARLY_TARGET=$(date -u -d "@$(( $(date -u -d "$TARGET_EARLY" +%s) + 3 ))" '+%Y-%m-%d %H:%M:%S+00')
+echo "  Early target: ${EARLY_TARGET} (just after backup)"
+CROSS_OUT=$("$AIFS_BIN" -c "$CONFIG" restore -i "$INSTANCE" --time "${EARLY_TARGET}" --promote --force 2>&1)
+echo "${CROSS_OUT}"
+if echo "${CROSS_OUT}" | grep -q "promoting directly"; then
+    fail "took fast path for different time — should have done full restore"
+fi
+if echo "${CROSS_OUT}" | grep -q "3/3 Starting PostgreSQL"; then
+    echo "  ✓ full restore detected"
+else
+    fail "expected full restore steps"
+fi
+
+sleep 5
+
+echo ""
+echo "=== 19. remount and verify cross-time rollback ==="
+"$AIFS_BIN" -c "$CONFIG" mount -i "$INSTANCE" "$MOUNT_POINT" -d
+sleep 2
+
+# pre-backup files must still exist.
+[[ -f "$MOUNT_POINT/file-before.txt" ]] || fail "file-before.txt missing in cross-time restore"
+# post-backup files that were written before the early target must still exist.
+[[ -f "$MOUNT_POINT/file-after.txt" ]] || fail "file-after.txt missing in cross-time restore"
+# promoted.txt (written after promote) must be gone.
+[[ ! -e "$MOUNT_POINT/promoted.txt" ]] || fail "promoted.txt should have been rolled back"
+
+echo "  ✓ cross-time restore: pre-backup intact, promoted.txt rolled back"
+
+echo ""
+echo "✓ aifs filesystem PITR end-to-end test completed successfully (all phases)"

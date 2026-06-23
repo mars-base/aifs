@@ -211,6 +211,39 @@ func (m *Manager) Restore(targetTime time.Time, promote, dryRun, tailLogs bool) 
 
 	fmt.Printf("!  Restoring PostgreSQL to %s (target-action=%s)\n", targetStr, targetActionName(promote))
 
+	// Fast path: if the cluster is already paused in recovery and the
+	// user only wants to promote, check whether the paused cluster is at
+	// (or very near) the requested target time.  pg_last_xact_replay_timestamp
+	// returns the last committed transaction, which is always slightly before
+	// the recovery target — a 2 s tolerance handles the gap.
+	//
+	// When the timestamps match: skip the full re-restore and simply resume
+	// WAL replay (pg_wal_replay_resume).  When they don't (e.g. user chose a
+	// different --time), fall through to the full wipe + restore + replay path.
+	if promote {
+		if paused, _ := m.podman.PGIsPausedInRecovery(); paused {
+			replayed, err := m.podman.PGLastXactReplayTimestamp()
+			if err == nil && !replayed.IsZero() {
+				diff := targetTime.Sub(replayed)
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff < 2*time.Second {
+					fmt.Println("  Cluster already paused at target time, promoting directly (skip re-restore)...")
+					out, err := m.podman.PGPromoteAfterRecovery()
+					if err != nil {
+						return fmt.Errorf("promoting after recovery: %w\n%s", err, out)
+					}
+					fmt.Println("[OK] Cluster promoted to read-write")
+					return nil
+				}
+				fmt.Printf("  Paused at %s, target is %s — full restore required\n",
+					replayed.Truncate(time.Second).Format("15:04:05"),
+					targetTime.Truncate(time.Second).Format("15:04:05"))
+			}
+		}
+	}
+
 	// Ensure repo is readable by postgres user during recovery archive-get.
 	if err := m.backup.EnsureRepoReadable(); err != nil {
 		fmt.Printf("  [!] repo readability warning: %v\n", err)
@@ -227,10 +260,9 @@ func (m *Manager) Restore(targetTime time.Time, promote, dryRun, tailLogs bool) 
 		return fmt.Errorf("pgBackRest restore: %w\n%s", err, out)
 	}
 
-	// Restore may create repo files owned by root; make them readable again.
-	if err := m.backup.EnsureRepoReadable(); err != nil {
-		fmt.Printf("  [!] repo readability warning: %v\n", err)
-	}
+	// Restore runs pgbackrest as the postgres user, so any repo files it
+	// touches are already postgres-owned; no readability fixup is needed.
+	_ = m.backup.EnsureRepoReadable()
 
 	fmt.Println("  3/3 Starting PostgreSQL...")
 	if err := m.podman.StartContainer(); err != nil {
