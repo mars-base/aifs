@@ -108,8 +108,13 @@ Examples:
 			bm, err := podman.NewBackupManager(cfg)
 			if err != nil {
 				fmt.Printf("  [!]  Warning: cannot rebuild backup container: %v\n", err)
-			} else if err := bm.EnsureBackupInfra(); err != nil {
-				fmt.Printf("  [!]  Warning: failed to update backup container: %v\n", err)
+			} else {
+				// Ensure SSH key exists before rebuilding backup container
+				if _, err := bm.EnsureSSHKey(); err != nil {
+					fmt.Printf("  [!]  Warning: cannot ensure backup SSH key: %v\n", err)
+				} else if err := bm.EnsureBackupInfra(); err != nil {
+					fmt.Printf("  [!]  Warning: failed to update backup container: %v\n", err)
+				}
 			}
 		}
 
