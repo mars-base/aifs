@@ -98,6 +98,21 @@ Examples:
 
 		// Set base directory if --base-dir is provided
 		if configBaseDir != "" {
+			// Check that the path is usable: reject if it's an existing file;
+			// warn if it's a non-empty directory that will gain aifs subdirs.
+			if info, err := os.Stat(configBaseDir); err == nil {
+				if !info.IsDir() {
+					return fmt.Errorf("base-dir %s exists but is not a directory", configBaseDir)
+				}
+				entries, err := os.ReadDir(configBaseDir)
+				if err == nil && len(entries) > 0 {
+					fmt.Printf("Warning: base-dir %s already exists and is not empty.\n", configBaseDir)
+					fmt.Printf("aifs will create subdirectories (dbdata/, backup/) alongside existing content.\n")
+					if !confirmPrompt("Continue? [y/N]: ") {
+						return fmt.Errorf("aborted by user")
+					}
+				}
+			}
 			cfg.BaseDir = configBaseDir
 			cfg.Backup.DataDir = filepath.Join(configBaseDir, "backup", "data")
 			cfg.Backup.LogDir = filepath.Join(configBaseDir, "backup", "log")
