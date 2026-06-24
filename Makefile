@@ -86,15 +86,46 @@ ifneq ($(UNAME_S),Darwin)
 export XDG_RUNTIME_DIR := $(shell echo $${XDG_RUNTIME_DIR:-/run/user/$$(id -u)})
 endif
 
-# Build the PostgreSQL + pgBackRest image.
+# ─── Single-arch dev builds (fast, no QEMU) ────────────────────────
+# Build the PostgreSQL + pgBackRest image for the host architecture only.
 image-pg:
 	$(PODMAN) build -t $(PG_TAG) -f $(EMBED_DIR)/Containerfile $(EMBED_DIR)
 
-# Build the pgBackRest backup image (runs as the postgres user, uid 999).
+# Build the pgBackRest backup image for the host architecture only.
 image-backup:
 	$(PODMAN) build -t $(BACKUP_TAG) -f $(EMBED_DIR)/backup.Containerfile $(EMBED_DIR)
 
-# Build both container images.
+# Build both container images (single arch).
 images: image-pg image-backup
 	@echo "Built images:"
 	@$(PODMAN) images --format '  {{.Repository}}:{{.Tag}}  ({{.Size}})' | grep -E 'aifs-pg|aifs-backup' || true
+
+# ─── Multi-arch builds (linux/amd64 + linux/arm64) ───────────────────
+# Requires qemu-user-static for cross-platform emulation:
+#   macOS:  brew install qemu
+#   Linux:  apt install qemu-user-static  (or equivalent)
+MULTI_PLATFORMS := linux/amd64,linux/arm64
+
+# Build multi-arch PG image (manifest list).
+image-pg-multi:
+	$(PODMAN) build --platform $(MULTI_PLATFORMS) \
+		--manifest $(PG_TAG) \
+		-f $(EMBED_DIR)/Containerfile $(EMBED_DIR)
+
+# Build multi-arch backup image (manifest list).
+image-backup-multi:
+	$(PODMAN) build --platform $(MULTI_PLATFORMS) \
+		--manifest $(BACKUP_TAG) \
+		-f $(EMBED_DIR)/backup.Containerfile $(EMBED_DIR)
+
+# Build both multi-arch images.
+images-multi: image-pg-multi image-backup-multi
+	@echo "Built multi-arch manifests:"
+	@$(PODMAN) manifest inspect $(PG_TAG) 2>/dev/null | grep -E '"architecture"' || true
+	@$(PODMAN) manifest inspect $(BACKUP_TAG) 2>/dev/null | grep -E '"architecture"' || true
+
+# Push multi-arch manifest lists to registry.
+images-push: images-multi
+	$(PODMAN) manifest push --all $(PG_TAG) docker://$(PG_TAG)
+	$(PODMAN) manifest push --all $(BACKUP_TAG) docker://$(BACKUP_TAG)
+	@echo "Pushed multi-arch images to registry"
