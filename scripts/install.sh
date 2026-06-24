@@ -384,7 +384,7 @@ echo "${BOLD}Quick start:${RESET}"
 echo "  aifs version"
 echo "  aifs config init --add <instance-name>"
 echo "  aifs start -i <instance-name>"
-echo "  aifs format -i <instance-name> --volume <volume-name>"
+echo "  aifs format -i <instance-name>"
 echo "  mkdir -p ~/mnt && aifs mount -i <instance-name> ~/mnt"
 echo ""
 

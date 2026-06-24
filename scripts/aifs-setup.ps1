@@ -686,7 +686,7 @@ if ($wslOk -and $pmOk) {
     Write-Host "    aifs start -i myproject"
     Write-Host ""
     Write-Host "    # 3. Format the filesystem (one-time)"
-    Write-Host "    aifs format -i myproject --volume myproject"
+    Write-Host "    aifs format -i myproject"
     Write-Host ""
     Write-Host "    # 4. Mount as a drive letter (Z: recommended)"
     Write-Host "    aifs mount -i myproject Z: -d"
