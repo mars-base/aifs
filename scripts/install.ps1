@@ -161,19 +161,20 @@ try {
 }
 
 # --- 3c. Scheduled Task: WSL Wake at logon ---
-# WSL VM is per-user and shuts down when idle.  This task runs "wsl echo ready"
-# at user logon to wake the VM; [boot] then starts podman system service.
-# portproxy is managed by aifs at runtime (EnsurePodmanService).
+# WSL VM shuts down when all wsl.exe clients exit (vmIdleTimeout=-1 doesn't
+# work in WSL 2.7.8). This task runs a persistent "sleep infinity" at user
+# logon to keep one wsl.exe alive, preventing idle shutdown. [boot] already
+# starts podman system service, so sleep infinity just acts as a keep-alive.
 try {
     $taskName = "WSL Podman Wake"
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
-    $action    = New-ScheduledTaskAction -Execute "wsl.exe" -Argument "echo ready"
+    $action    = New-ScheduledTaskAction -Execute "wsl.exe" -Argument '-d podman-machine-default --exec sleep infinity'
     $trigger   = New-ScheduledTaskTrigger -AtLogon -User "$env:USERDOMAIN\$env:USERNAME"
     $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
     $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-    Write-Ok "Scheduled Task '$taskName' created (wakes WSL at logon)"
+    Write-Ok "Scheduled Task '$taskName' created (persistent WSL keep-alive)"
 } catch {
     Write-Warn "Scheduled Task creation failed: $_"
 }
