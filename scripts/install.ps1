@@ -126,19 +126,30 @@ if (Test-Podman) {
 Write-Step "Configuring WSL auto-start for podman..."
 
 # --- 3a. .wslconfig (no idle timeout) ---
-# Must be written BEFORE the first wsl command that cold-boots the VM.
 # By default WSL2 VMs shut down ~8s after the last terminal exits. Disable
 # idle timeout so the podman service stays alive across reboots.
-try {
-    $wslConfig = @"
+# .wslconfig is only read on WSL VM cold-boot. On first install (no
+# existing config), shut down the VM so 3b cold-boots with the new config.
+# On upgrade, skip the shutdown to avoid killing running containers/mounts.
+$wslConfig = @"
 [wsl2]
 vmIdleTimeout=-1
 "@
-    $wslConfig | Out-File -FilePath "$env:USERPROFILE\.wslconfig" -Encoding ascii -Force
-    # .wslconfig is only read on WSL VM cold-boot. Shut down any existing
-    # VM so the next wsl command (3b) cold-boots with the new config.
-    wsl --shutdown 2>$null
-    Write-Ok ".wslconfig created (vmIdleTimeout=-1)"
+$wslConfigPath = "$env:USERPROFILE\.wslconfig"
+$existingConfig = ""
+if (Test-Path $wslConfigPath) {
+    $existingConfig = Get-Content $wslConfigPath -Raw -ErrorAction SilentlyContinue
+}
+$needShutdown = ($existingConfig -notmatch 'vmIdleTimeout=-1')
+try {
+    $wslConfig | Out-File -FilePath $wslConfigPath -Encoding ascii -Force
+    if ($needShutdown) {
+        # Shut down so next wsl cold-boots with the new .wslconfig.
+        wsl --shutdown 2>$null
+        Write-Ok ".wslconfig created (vmIdleTimeout=-1)"
+    } else {
+        Write-Ok ".wslconfig already configured (vmIdleTimeout=-1), skipped shutdown"
+    }
 } catch {
     Write-Warn ".wslconfig creation failed: $_"
 }
@@ -151,6 +162,9 @@ $bootConfig = @"
 [boot]
 systemd=true
 command=podman system service -t 0 tcp://0.0.0.0:2375
+
+[automount]
+options = metadata
 "@
 $bootB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bootConfig))
 try {

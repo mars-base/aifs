@@ -1,4 +1,4 @@
-# scripts/test-e2e.ps1 — End-to-end PITR test through the aifs filesystem on Windows.
+# scripts/test-e2e.ps1 - End-to-end PITR test through the aifs filesystem on Windows.
 #
 # Usage:
 #   .\scripts\test-e2e.ps1 [instance_name]
@@ -30,14 +30,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$AifsBin = if ($env:AIFS_BIN) { $env:AIFS_BIN } else { Join-Path $env:USERPROFILE ".local\bin\aifs.exe" }
+# Prefer AIFS_BIN env, then system-installed aifs, then fallback path.
+if ($env:AIFS_BIN) {
+    $AifsBin = $env:AIFS_BIN
+} elseif (Get-Command aifs -ErrorAction SilentlyContinue) {
+    $AifsBin = (Get-Command aifs).Source
+} else {
+    $AifsBin = Join-Path $env:USERPROFILE ".local\bin\aifs.exe"
+}
 $ForceClean = $env:FORCE_CLEAN -eq "1"
 
 $Suffix = "pitrwin-$PID"
 $BackupContainer = "aifs-backup-${Suffix}"
 $Container = "aifs-pg-${Instance}"
 
-$WorkDir = Join-Path $env:TEMP "aifs-pitr-win-${Suffix}"
+$WorkDir = "C:\temp\aifs-pitr-win-${Suffix}"
 $Config = Join-Path $WorkDir "config.yaml"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -68,7 +75,7 @@ function Invoke-Aifs {
 }
 
 function Wait-PostgresReady {
-    Write-Host "→ Waiting for PostgreSQL to be ready..."
+    Write-Host "-> Waiting for PostgreSQL to be ready..."
     for ($i = 0; $i -lt 60; $i++) {
         $ready = $false
         try {
@@ -76,12 +83,12 @@ function Wait-PostgresReady {
             if ($LASTEXITCODE -eq 0) { $ready = $true }
         } catch { }
         if ($ready) {
-            Write-Host "  ✓ PostgreSQL ready"
+            Write-Host "  [OK] PostgreSQL ready"
             return
         }
         Start-Sleep -Seconds 1
     }
-    Write-Host "  ✗ PostgreSQL did not become ready; dumping container status and logs..."
+    Write-Host "  [FAIL] PostgreSQL did not become ready; dumping container status and logs..."
     try { & podman ps -a | Out-String | Write-Host } catch { }
     try { & podman logs --tail 100 $Container 2>&1 | Out-String | Write-Host } catch { }
     throw "PostgreSQL did not become ready"
@@ -98,11 +105,12 @@ function Test-FileContent {
 
 function Cleanup {
     Write-Host ""
-    Write-Host "→ Cleaning up..."
+    Write-Host "-> Cleaning up..."
     $ErrorActionPreference = "Continue"
     try { Invoke-Aifs umount $MountPoint } catch { }
-    try { Invoke-Aifs stop } catch { }
-    try { & podman rm -f $Container $BackupContainer 2>$null } catch { }
+    try { & podman rm -f $BackupContainer 2>$null } catch { }
+    try { Invoke-Aifs destroy --clean-data --force } catch { }
+    try { & podman rm -f $Container 2>$null } catch { }
     if (Test-Path $WorkDir) {
         Remove-Item -Recurse -Force $WorkDir -ErrorAction SilentlyContinue
     }
@@ -111,10 +119,10 @@ function Cleanup {
 # trap { Cleanup; break }
 
 if (-not $ForceClean) {
-    Write-Host "⚠️  This script will create an isolated aifs environment under ${WorkDir}."
+    Write-Host "[WARNING]  This script will create an isolated aifs environment under ${WorkDir}."
     Write-Host "    It will be automatically cleaned up when the script exits."
     $ans = Read-Host "Continue? [y/N]"
-    if ($ans -notmatch '^[yY]') {
+    if ($ans -notmatch "^[yY]") {
         Write-Host "Cancelled"
         exit 0
     }
@@ -135,8 +143,7 @@ Write-Host "=== 1. config init ==="
 Invoke-Aifs config init -o $Config --add $Instance --base-dir $WorkDir
 
 # Isolate the backup container from any existing aifs environment.
-$cfgLines = Get-Content $Config
-$cfgLines = $cfgLines -replace '^( *)container_name: aifs-backup$', "`$1container_name: ${BackupContainer}"
+$cfgLines = (Get-Content $Config).Replace("container_name: aifs-backup", "container_name: ${BackupContainer}")
 $cfgLines | Set-Content -Path $Config -Encoding UTF8
 
 Write-Host ""
@@ -160,7 +167,7 @@ Set-Content -Path "$MountPoint\dir1\before.txt" -Value "before backup in dir1" -
 
 Test-FileContent -Path "$MountPoint\file-before.txt" -Expected "before backup"
 if (-not (Test-Path "$MountPoint\dir1")) { throw "pre-backup directory missing" }
-Write-Host "  ✓ pre-backup files written"
+Write-Host "  [OK] pre-backup files written"
 
 Write-Host ""
 Write-Host "=== 6. take full snapshot ==="
@@ -172,7 +179,7 @@ Set-Content -Path "$MountPoint\file-after.txt" -Value "after backup" -NoNewline
 Set-Content -Path "$MountPoint\dir1\after.txt" -Value "after backup in dir1" -NoNewline
 if (-not (Test-Path "$MountPoint\file-after.txt")) { throw "post-backup file missing" }
 if (-not (Test-Path "$MountPoint\dir1\after.txt")) { throw "post-backup dir1 file missing" }
-Write-Host "  ✓ post-backup files written"
+Write-Host "  [OK] post-backup files written"
 
 # Give WAL archiving a moment to advance past the post-backup writes.
 Start-Sleep -Seconds 2
@@ -185,7 +192,7 @@ Start-Sleep -Seconds 2
 Set-Content -Path "$MountPoint\file-final.txt" -Value "final after target" -NoNewline
 Set-Content -Path "$MountPoint\dir1\final.txt" -Value "final after target in dir1" -NoNewline
 if (-not (Test-Path "$MountPoint\file-final.txt")) { throw "final file missing" }
-Write-Host "  ✓ final files written (should be rolled back)"
+Write-Host "  [OK] final files written (should be rolled back)"
 
 # Let the final writes be archived.
 Start-Sleep -Seconds 2
@@ -227,9 +234,9 @@ Test-FileContent -Path "$MountPoint\dir1\after.txt" -Expected "after backup in d
 if (Test-Path "$MountPoint\file-final.txt") { throw "file-final.txt should have been rolled back" }
 if (Test-Path "$MountPoint\dir1\final.txt") { throw "dir1\final.txt should have been rolled back" }
 
-Write-Host "  ✓ pre-target files preserved, post-target files rolled back"
+Write-Host "  [OK] pre-target files preserved, post-target files rolled back"
 
 Write-Host ""
-Write-Host "✓ aifs filesystem PITR end-to-end test completed successfully"
+Write-Host "[OK] aifs filesystem PITR end-to-end test completed successfully"
 
 Cleanup
