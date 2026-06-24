@@ -47,6 +47,7 @@ func loadConfig() error {
 	if path == "" {
 		path = platform.DefaultConfigPath()
 	}
+	cfgPath = path
 	c, err := config.Load(path)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
