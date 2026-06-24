@@ -7,13 +7,20 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mars-base/aifs/internal/config"
 	"github.com/mars-base/aifs/internal/pitr"
 	"github.com/mars-base/aifs/internal/platform"
+	"github.com/mars-base/aifs/internal/podman"
 )
 
 func init() {
 	rootCmd.AddCommand(startCmd)
+	startCmd.Flags().BoolVar(&startAll, "all", false, "start all configured instances")
 }
+
+var (
+	startAll bool
+)
 
 var startCmd = &cobra.Command{
 	Use:   "start",
@@ -26,152 +33,187 @@ Steps:
   3. Build PostgreSQL + pgBackRest image (if missing)
   4. Create data directories (if missing)
   5. Start PostgreSQL container
-  6. Initialize pgBackRest stanza (if PITR enabled)`,
+  6. Initialize pgBackRest stanza (if PITR enabled)
+
+Use --all to start all instances configured in the current config file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := loadConfig(); err != nil {
-			return err
+		if startAll {
+			return startAllInstances()
 		}
+		return startInstance()
+	},
+}
 
-		fmt.Println("=== aifs start ===")
-		fmt.Printf("Platform: %s\n", platform.Detect())
+// startAllInstances starts every instance listed in the config file.
+func startAllInstances() error {
+	path := cfgPath
+	if path == "" {
+		path = platform.DefaultConfigPath()
+	}
+	c, err := config.Load(path)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
 
-		// 1. Check dependencies
-		fmt.Println("\n-> Checking dependencies...")
-		missing := platform.MissingPrereqs()
-		if len(missing) > 0 {
-			for _, d := range missing {
-				fmt.Printf("  [X] %s: %s\n", d.Name, d.Hint)
+	if len(c.Instances) == 0 {
+		return fmt.Errorf("no instances configured in %s", path)
+	}
+	cfgPath = path
+
+	var firstErr error
+	ok := 0
+	for name := range c.Instances {
+		fmt.Printf("\n>>> starting instance %q <<<\n", name)
+		if err := startSingle(c, name); err != nil {
+			fmt.Printf("  [X] %s: %v\n", name, err)
+			if firstErr == nil {
+				firstErr = err
 			}
-			return fmt.Errorf("missing dependencies, please install them first")
+			continue
 		}
-		fmt.Println("  [OK] podman available")
+		ok++
+	}
+	fmt.Printf("\n>>> started %d/%d instances <<<\n", ok, len(c.Instances))
+	return firstErr
+}
 
-		// 2. Initialize podman manager
-		pm, err := newPodman()
+// startInstance starts the instance specified by -i (default "default").
+func startInstance() error {
+	if err := loadConfig(); err != nil {
+		return err
+	}
+	return doStart(cfg)
+}
+
+// startSingle starts a specific instance from a shared config.
+func startSingle(c *config.Config, name string) error {
+	cfgInstance = name
+	if err := c.SetInstance(name); err != nil {
+		return err
+	}
+	return doStart(c)
+}
+
+// doStart performs the actual start workflow.
+func doStart(c *config.Config) error {
+	fmt.Println("=== aifs start ===")
+	fmt.Printf("Platform: %s\n", platform.Detect())
+
+	// 1. Check dependencies
+	fmt.Println("\n-> Checking dependencies...")
+	missing := platform.MissingPrereqs()
+	if len(missing) > 0 {
+		for _, d := range missing {
+			fmt.Printf("  [X] %s: %s\n", d.Name, d.Hint)
+		}
+		return fmt.Errorf("missing dependencies, please install them first")
+	}
+	fmt.Println("  [OK] podman available")
+
+	// 2. Initialize podman manager
+	pm, err := podman.New(c)
+	if err != nil {
+		return err
+	}
+
+	// 3. podman machine (macOS/Windows, no-op on Linux)
+	if err := pm.EnsureMachine(); err != nil {
+		return err
+	}
+
+	// 4. Build image (if missing)
+	if err := pm.EnsureImage(); err != nil {
+		return err
+	}
+
+	// 5. Create directories (if missing)
+	if err := pm.EnsureDirs(); err != nil {
+		return err
+	}
+
+	// 6. Ensure shared network
+	if err := pm.EnsureNetwork(); err != nil {
+		return err
+	}
+
+	// 7. Create and start container
+	if err := pm.EnsureContainer(); err != nil {
+		return err
+	}
+
+	// Wait for PostgreSQL to finish initialization (initdb + init scripts).
+	fmt.Println("-> Waiting for PostgreSQL to be ready...")
+	for i := 0; i < 60; i++ {
+		if ready, _ := pm.PGIsReady(); ready {
+			break
+		}
+		if cs, _ := pm.Status(); cs != nil && !cs.Running && strings.HasPrefix(strings.ToLower(cs.Status), "exited") {
+			return fmt.Errorf("PostgreSQL container exited during startup (status: %s); data directory may be corrupted -- run 'aifs restore -i %s --time \"...\"' to recover", cs.Status, c.Instance)
+		}
+		time.Sleep(time.Second)
+	}
+
+	// 8. Initialize pgBackRest stanza (via backup container)
+	if c.PITR.Enabled {
+		bm, err := podman.NewBackupManager(c)
 		if err != nil {
-			return err
+			return fmt.Errorf("creating backup manager: %w", err)
 		}
 
-		// 3. podman machine (macOS/Windows, no-op on Linux)
-		if err := pm.EnsureMachine(); err != nil {
-			return err
+		if _, err := bm.EnsureSSHKey(); err != nil {
+			return fmt.Errorf("backup ssh key: %w", err)
 		}
 
-		// 4. Build image (if missing)
-		if err := pm.EnsureImage(); err != nil {
-			return err
+		fmt.Println("-> Authorizing backup key on PostgreSQL container...")
+		if err := bm.AuthorizeKeyOnInstance(); err != nil {
+			fmt.Printf("  [!] backup key authorization warning: %v\n", err)
 		}
 
-		// 5. Create directories (if missing)
-		if err := pm.EnsureDirs(); err != nil {
-			return err
+		fmt.Println("-> Ensuring backup infrastructure is ready...")
+		if err := bm.EnsureBackupInfra(); err != nil {
+			return fmt.Errorf("backup infrastructure: %w", err)
 		}
 
-		// 6. Ensure shared network
-		if err := pm.EnsureNetwork(); err != nil {
-			return err
+		pt := pitr.New(c, pm, bm)
+		if err := pt.EnsureStanza(); err != nil {
+			fmt.Printf("  [!] stanza create warning: %v\n", err)
+		}
+		if err := pt.CheckStanza(); err != nil {
+			fmt.Printf("  [!] stanza check warning: %v\n", err)
 		}
 
-		// 7. Create and start container
-		if err := pm.EnsureContainer(); err != nil {
-			return err
+		stanza := c.PITR.PgBackRestStanza
+		archiveCmd := fmt.Sprintf("pgbackrest --stanza=%s archive-push %%p", stanza)
+		setSQL := fmt.Sprintf("ALTER SYSTEM SET archive_command TO '%s'", archiveCmd)
+
+		if _, err := pm.Exec("psql", "-U", c.Postgres.User, "-d", c.Postgres.Database, "-c", setSQL); err != nil {
+			fmt.Printf("  [!] setting archive_command: %v\n", err)
+		} else {
+			fmt.Println("-> archive_command configured")
 		}
 
-		// Wait for PostgreSQL to finish initialization (initdb + init scripts).
-		fmt.Println("-> Waiting for PostgreSQL to be ready...")
-		for i := 0; i < 60; i++ {
-			if ready, _ := pm.PGIsReady(); ready {
+		pm.Exec("psql", "-U", c.Postgres.User, "-d", c.Postgres.Database, "-c", "SELECT pg_reload_conf()")
+		pm.Exec("psql", "-U", c.Postgres.User, "-d", c.Postgres.Database, "-c", "SELECT pg_switch_wal()")
+
+		fmt.Println("-> Waiting for WAL archiver to catch up...")
+		for i := 0; i < 30; i++ {
+			time.Sleep(2 * time.Second)
+			out, err := pm.Exec("psql", "-U", c.Postgres.User, "-d", c.Postgres.Database, "-t", "-c",
+				"SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') AS f WHERE f LIKE '%.ready'")
+			if err == nil && strings.TrimSpace(out) == "0" {
+				fmt.Println("  [OK] WAL archiver caught up")
 				break
 			}
-			// If the container has exited, stop waiting -- PG is not going to
-			// become ready (e.g. a corrupted data directory from a failed
-			// restore). Report the failure immediately so the user knows to
-			// run `aifs restore` instead of waiting out the full timeout.
-			if cs, _ := pm.Status(); cs != nil && !cs.Running && strings.HasPrefix(strings.ToLower(cs.Status), "exited") {
-				return fmt.Errorf("PostgreSQL container exited during startup (status: %s); data directory may be corrupted -- run 'aifs restore -i %s --time \"...\"' to recover", cs.Status, cfg.Instance)
-			}
-			time.Sleep(time.Second)
 		}
+	}
 
-		// 8. Initialize pgBackRest stanza (via backup container)
-		if cfg.PITR.Enabled {
-			bm, err := newBackupManager()
-			if err != nil {
-				return fmt.Errorf("creating backup manager: %w", err)
-			}
+	if err := c.Save(cfgPath); err != nil {
+		fmt.Printf("  [!] failed to save config: %v\n", err)
+	}
 
-			// Ensure backup SSH key exists before authorizing it on the PG container.
-			if _, err := bm.EnsureSSHKey(); err != nil {
-				return fmt.Errorf("backup ssh key: %w", err)
-			}
-
-			// Install backup public key into the PG container so pgbackrest can SSH in.
-			// This is best-effort during start: if the container is not in a state
-			// that accepts exec sessions yet, we warn instead of failing the whole
-			// start -- the key is only needed for backups, not for running PG.
-			fmt.Println("-> Authorizing backup key on PostgreSQL container...")
-			if err := bm.AuthorizeKeyOnInstance(); err != nil {
-				fmt.Printf("  [!] backup key authorization warning: %v\n", err)
-			}
-
-			// Ensure backup infrastructure is ready
-			fmt.Println("-> Ensuring backup infrastructure is ready...")
-			if err := bm.EnsureBackupInfra(); err != nil {
-				return fmt.Errorf("backup infrastructure: %w", err)
-			}
-
-			pt := pitr.New(cfg, pm, bm)
-			if err := pt.EnsureStanza(); err != nil {
-				fmt.Printf("  [!] stanza create warning: %v\n", err)
-			}
-			if err := pt.CheckStanza(); err != nil {
-				fmt.Printf("  [!] stanza check warning: %v\n", err)
-			}
-
-			// init.sh set archive_mode=on but did NOT set archive_command during
-			// first-time initdb because the stanza doesn't exist yet.  Set it
-			// now via ALTER SYSTEM and wait for the archiver to process any
-			// pending WAL segments before the first backup can succeed.
-			// PostgreSQL runs the archive_command as the postgres user (uid 999),
-			// which owns the repo (the backup container also runs as postgres,
-			// same host uid via rootless podman subuid), so no sudo/root is
-			// needed.
-			stanza := cfg.PITR.PgBackRestStanza
-			archiveCmd := fmt.Sprintf("pgbackrest --stanza=%s archive-push %%p", stanza)
-			setSQL := fmt.Sprintf("ALTER SYSTEM SET archive_command TO '%s'", archiveCmd)
-
-			if _, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", setSQL); err != nil {
-				fmt.Printf("  [!] setting archive_command: %v\n", err)
-			} else {
-				fmt.Println("-> archive_command configured")
-			}
-
-			// Reload to make the archiver pick up the new command, then
-			// switch WAL to give it a fresh segment.
-			pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_reload_conf()")
-			pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_switch_wal()")
-
-			fmt.Println("-> Waiting for WAL archiver to catch up...")
-			for i := 0; i < 30; i++ {
-				time.Sleep(2 * time.Second)
-				out, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-t", "-c",
-					"SELECT count(*) FROM pg_ls_dir('pg_wal/archive_status') AS f WHERE f LIKE '%.ready'")
-				if err == nil && strings.TrimSpace(out) == "0" {
-					fmt.Println("  [OK] WAL archiver caught up")
-					break
-				}
-			}
-		}
-
-		// Persist auto-assigned ports so subsequent starts don't re-allocate.
-		if err := saveConfig(); err != nil {
-			fmt.Printf("  [!] failed to save config: %v\n", err)
-		}
-
-		fmt.Println("\nOK started")
-		fmt.Printf("  PostgreSQL: postgres://%s:%s@localhost:%d/%s\n",
-			cfg.Postgres.User, cfg.Postgres.Password,
-			cfg.Postgres.Port, cfg.Postgres.Database)
-		return nil
-	},
+	fmt.Println("\nOK started")
+	fmt.Printf("  PostgreSQL: postgres://%s:%s@localhost:%d/%s\n",
+		c.Postgres.User, c.Postgres.Password,
+		c.Postgres.Port, c.Postgres.Database)
+	return nil
 }
