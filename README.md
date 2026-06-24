@@ -94,9 +94,8 @@ aifs start -i your-project
 # 3. Format the filesystem (one-time setup)
 aifs format -i your-project
 
-# 4. Mount as a drive letter or directory
-aifs mount -i your-project Z: -d            # drive letter (session-independent)
-aifs mount -i your-project C:\mnt\aifs -d  # or directory path
+# 4. Mount as a drive letter (recommended)
+aifs mount -i your-project Z: -d
 
 # 5. Use it like a normal drive
 echo hello aifs > Z:\hello.txt
@@ -117,7 +116,21 @@ aifs mount -i your-project Z: -d
 type Z:\hello.txt                           # still there
 ```
 
-> **Tip**: On Windows, use a drive letter (Z:, X:, etc.) for session-independent access. Directory mounts require an interactive logged-on console session.
+> [!IMPORTANT]
+> **Always use a drive letter (Z:, X:, etc.) on Windows.** Drive-letter mounts are session-independent — they survive closing the terminal, work across all processes, and persist across user logins until explicitly unmounted.
+>
+> ### Directory mounts (not recommended for daily use)
+>
+> aifs also supports directory-path mounts (`aifs mount -i your-project C:\mnt\aifs -d`), but with **significant limitations**:
+>
+> | Limitation | Detail |
+> |---|---|
+> | **Terminal-bound** | Closing the PowerShell/cmd window **kills the mount**. This is inherent to how Windows delivers `CTRL_CLOSE_EVENT` to console-attached processes — rclone, SSHFS-Win, and all other WinFsp-based tools have the same behavior. |
+> | **Interactive session only** | Directory mounts require an active interactive logon session (WinSta0). They don't work from services, SSH, or non-interactive contexts. |
+> | **Mount point must NOT exist** | The target directory must be absent — WinFsp creates it on mount. If `C:\mnt\aifs` already exists, you'll get an error telling you to remove it first. |
+> | **Logout kills mount** | Like all session-scoped mounts (including drive letters), directory mounts are lost on logout. |
+>
+> **Use directory mounts only for quick, temporary access** (e.g., `aifs mount -i test1 C:\mnt\aifs` to peek at files). For daily work, use a drive letter.
 
 ## Data Storage
 
