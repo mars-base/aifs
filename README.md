@@ -4,15 +4,6 @@ A database filesystem built for AI Agents — give your agents a time machine.
 
 AI agents are powerful but unpredictable: they can delete files, corrupt data, or make mistakes that are hard to undo. `aifs` solves this with **PITR (Point-In-Time Recovery)** powered by **PostgreSQL**, letting you rewind the entire filesystem to any moment in time. Agents can work fearlessly, knowing nothing is ever truly lost.
 
-## Why aifs
-
-| Problem | aifs Solution |
-|---------|---------------|
-| Agent accidentally deletes files | Rewind to just before the deletion |
-| Agent corrupts data mid-task | Restore to the last known-good snapshot |
-| Need to experiment safely | Branch the filesystem, test, then merge or discard |
-| Multiple agents share state | Isolated instances with per-agent time travel |
-
 ## Prerequisites
 
 - **Linux**: podman runs natively, no VM required. On Debian/Ubuntu, enable unprivileged user namespaces for rootless containers:
@@ -20,7 +11,7 @@ AI agents are powerful but unpredictable: they can delete files, corrupt data, o
   sudo sysctl kernel.unprivileged_userns_clone=1
   echo 'kernel.unprivileged_userns_clone=1' | sudo tee /etc/sysctl.d/99-rootless-podman.conf
   ```
-- **macOS**: `brew install podman` + `podman machine init`
+- **macOS**: `brew install podman` + `podman machine init` + `podman machine start`
 - **Windows**: Run `scripts/aifs-setup.ps1` to install WSL2 + Podman (see below), or install manually
 
 ### Windows setup script
@@ -33,13 +24,6 @@ On Windows you need to complete **two steps**:
 `aifs-setup.ps1` checks CPU virtualization, enables WSL2, installs Podman, and initializes a podman machine. The first run may enable Windows features that require a reboot:
 
 ```powershell
-irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/aifs-setup.ps1 | iex
-```
-
-With a proxy:
-
-```powershell
-$env:HTTPS_PROXY="http://proxy.example.com:8080"
 irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/aifs-setup.ps1 | iex
 ```
 
@@ -73,7 +57,7 @@ aifs config init --add your-project --base-dir ~/.aifs
 aifs start -i your-project
 
 # 3. Format the filesystem (one-time setup)
-aifs format -i your-project --volume your-project
+aifs format -i your-project
 
 # 4. Mount the filesystem
 mkdir -p ~/mnt
@@ -108,10 +92,11 @@ aifs config init --add your-project --base-dir D:\aifs
 aifs start -i your-project
 
 # 3. Format the filesystem (one-time setup)
-aifs format -i your-project --volume your-project
+aifs format -i your-project
 
-# 4. Mount as a drive letter (Z: is recommended)
-aifs mount -i your-project Z: -d
+# 4. Mount as a drive letter or directory
+aifs mount -i your-project Z: -d            # drive letter (session-independent)
+aifs mount -i your-project C:\mnt\aifs -d  # or directory path
 
 # 5. Use it like a normal drive
 echo hello aifs > Z:\hello.txt
@@ -171,27 +156,107 @@ When `--base-dir` is set, the directory layout looks like this:
 > network storage via `backup.data_dir` override in config. Never place
 > PostgreSQL data files on NFS or SMB — it will corrupt your database.
 
-## Restore time formats
+## Daily Operations Manual
 
-`aifs restore --time` accepts the following timezone-aware formats:
+### After reboot or logout
 
-```bash
-aifs restore -i your-project --time "2026-06-15 14:30:00+00:00"
-aifs restore -i your-project --time "2026-06-15 14:30:00+0000"
-aifs restore -i your-project --time "2026-06-15 14:30:00+00"
-aifs restore -i your-project --time "2026-06-15 22:30:00+08"
+Background mounts are **session-scoped** — they disappear on logout or reboot. WSL VM and podman survive via a Scheduled Task keep-alive.
+
+```powershell
+# Windows: after logging back in
+aifs mount -i your-project Z: -d
 ```
 
-You can also omit the timezone offset, in which case the time is interpreted
-as **UTC**:
-
 ```bash
-aifs restore -i your-project --time "2026-06-15 14:30:00"
+# Linux/macOS: after logging back in
+aifs mount -i your-project ~/mnt -d
 ```
 
-The provided time is normalized to the same absolute point in time before being
-passed to pgBackRest, so `+08` and `+00` inputs that represent the same moment
-will restore to the same state.
+If the podman WSL VM was cold-restarted (e.g. `wsl --shutdown` or system reboot), containers with `--restart unless-stopped` may not auto-recover in podman under WSL. Use `--all` to bring them all back:
+
+```bash
+aifs start --all
+```
+
+### Viewing status
+
+```bash
+# Quick overview: all instances and their containers
+aifs list
+
+# Detailed status for the current instance, including snapshots
+aifs status -i your-project
+
+# Snapshot list with full/diff/incr type, labels, and UTC timestamps
+aifs snapshot list -i your-project
+```
+
+### Snapshot workflow
+
+Snapshots are your safety net. Take one before any risky operation.
+
+```bash
+# Full baseline (do this weekly)
+aifs snapshot create -i your-project --type full
+
+# Daily incremental (fast, small)
+aifs snapshot create -i your-project --type diff
+```
+
+### PITR restore
+
+Restore rewinds the filesystem to a point in time. By default, after restore the database is **paused** (read-only, `pg_is_in_recovery()=t`). This lets you inspect files and verify correctness without committing to the new timeline.
+
+```bash
+# 1. Unmount before restore
+aifs umount Z:                           # Windows
+aifs umount ~/mnt                         # Linux/macOS
+
+# 2. Restore to a point in time (pauses in read-only by default)
+aifs restore -i your-project --time "2026-06-24 10:30:00+00" --force
+
+# 3. Mount and inspect the restored state
+aifs mount -i your-project Z: -d
+# Read files, check contents — database is read-only
+
+# 4. If it's wrong, try a different time (just restore again)
+aifs umount Z:
+aifs restore -i your-project --time "2026-06-24 10:28:00+00" --force
+aifs mount -i your-project Z: -d
+
+# 5. Once satisfied, promote the cluster to read-write
+aifs umount Z:
+aifs restore -i your-project --time "2026-06-24 10:30:00+00" --promote --force
+aifs mount -i your-project Z: -d
+# Now you can write again
+```
+
+**Promote fast path**: If the cluster is already paused at the **same** target time, `--promote` skips re-restore and directly promotes (`promoting directly` message). This lets you inspect first, then promote instantly.
+
+**Promote full path**: If you change the target time or the cluster is already promoted, `--promote` does a full wipe + restore + replay + promote cycle.
+
+### Restore workflow diagram
+
+```
+Snapshot A ──→ writes B ──→ writes C ──→ ... ──→ now
+               (14:00)      (14:05)
+
+# "Oh no, B deleted important files at 14:00"
+aifs restore --time "2026-06-24 13:59:00+00"   # rewind to just before B
+# → inspect → wrong? Adjust time →
+aifs restore --time "2026-06-24 14:02:00+00"   # rewind to between B and C
+# → inspect → correct! Promote →
+aifs restore --time "2026-06-24 14:02:00+00" --promote
+```
+
+### Restore time format
+
+Use UTC with timezone offset. When in doubt, check snapshot timestamps with `aifs status -i your-project` (labelled `UTC`).
+
+```bash
+aifs restore -i your-project --time "2026-06-24 10:30:00+00"
+aifs restore -i your-project --time "2026-06-24 18:30:00+08"    # same moment, UTC+8
+```
 
 ## Snapshot types
 
