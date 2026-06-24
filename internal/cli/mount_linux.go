@@ -45,6 +45,7 @@ func mountInBackground(mountPoint string) error {
 		time.Sleep(200 * time.Millisecond)
 		if mountVisible(mountPoint) {
 			fmt.Printf("background mount pid %d at %s\n", p.Pid, mountPoint)
+			fmt.Println("note: mount runs under your user session and will be lost on logout; re-mount after logging back in")
 			_ = os.Remove(logFile.Name())
 			return nil
 		}

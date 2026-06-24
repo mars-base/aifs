@@ -80,6 +80,7 @@ func mountInBackgroundWithFlags(mountPoint string, creationFlags uint32) error {
 				fmt.Fprintf(os.Stderr, "warning: recording mount state: %v\n", err)
 			}
 			fmt.Printf("background mount pid %d at %s\n", p.Pid, mountPoint)
+			fmt.Println("note: mount runs under your user session and will be lost on logout; re-mount after logging back in")
 			return nil
 		}
 	}
