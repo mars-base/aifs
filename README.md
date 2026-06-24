@@ -1,8 +1,8 @@
 # aifs
 
-A database filesystem built for AI Agents — give your agents a time machine.
+Aifs is a database file system designed for AI-Agent and various needs to prevent accidental deletion, making data modifications reliable and controllable, and allowing data to be returned to any time.
 
-AI agents are powerful but unpredictable: they can delete files, corrupt data, or make mistakes that are hard to undo. `aifs` solves this with **PITR (Point-In-Time Recovery)** powered by **PostgreSQL**, letting you rewind the entire filesystem to any moment in time. Agents can work fearlessly, knowing nothing is ever truly lost.
+In the AI Agent era, agents autonomously read, write, and modify files at scale — a single misstep can destroy hours of work. aifs makes every change traceable and reversible. Powered by PostgreSQL PITR (Point-In-Time Recovery), it turns the filesystem into a time machine: rewind to any moment, recover deleted files, undo mistakes, and let agents work fearlessly knowing nothing is ever truly lost.
 
 ## Prerequisites
 
