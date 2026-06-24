@@ -323,4 +323,4 @@ make build
 
 ## License
 
-[CC BY-NC 4.0](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, educational, academic, non-profit, and government use. Commercial use requires a separate license.
