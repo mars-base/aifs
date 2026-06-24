@@ -110,12 +110,18 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string)
 		return fmt.Errorf("instance is already mounted by another aifs mount")
 	}
 
-	// On Windows, mountPoint is often a drive letter (e.g., "Z:" or "Z:\").
-	// os.MkdirAll fails on bare drive letters because they aren't directory
-	// paths. Only create the directory for real directory paths.
+	// WinFsp directory mounts need the parent to exist, but the mount
+	// point itself must NOT exist — WinFsp creates it. Drive letters
+	// (e.g. "Z:") go through the Mount Manager and need no directory.
 	if !isDriveLetterMount(dirPath) {
-		if err := os.MkdirAll(dirPath, 0755); err != nil {
-			return fmt.Errorf("creating mount point: %w", err)
+		if info, err := os.Stat(dirPath); err == nil {
+			if info.IsDir() {
+				return fmt.Errorf("mount point %s already exists as a directory; WinFsp requires the mount point to NOT exist — it creates it on mount. Remove the directory first (e.g. rmdir %s) and try again", dirPath, dirPath)
+			}
+			return fmt.Errorf("mount point %s already exists (not a directory); remove it and try again", dirPath)
+		}
+		if err := os.MkdirAll(filepath.Dir(dirPath), 0755); err != nil {
+			return fmt.Errorf("creating parent of mount point: %w", err)
 		}
 	}
 

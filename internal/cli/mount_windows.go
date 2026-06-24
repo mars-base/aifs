@@ -113,7 +113,6 @@ func isDriveLetterMount(mp string) bool {
 // mountVisible reports whether mountPoint currently hosts a live aifs volume
 // by checking for the synthetic sentinel file.
 func mountVisible(mountPoint string) bool {
-	mp := pgfs.NormalizeMountPoint(mountPoint)
-	_, err := os.Stat(mp + pgfs.SentinelName)
+	_, err := os.Stat(pgfs.MountPathJoin(mountPoint, pgfs.SentinelName))
 	return err == nil
 }
