@@ -58,6 +58,9 @@ aifs config init --add your-project --base-dir ~/.aifs
 # 2. Start PostgreSQL and backup container
 aifs start -i your-project
 
+# 2.1 Check status
+aifs status -i your-project
+
 # 3. Format the filesystem (one-time setup)
 aifs format -i your-project
 
@@ -122,6 +125,9 @@ aifs config init --add your-project --base-dir D:\aifs
 
 # 2. Start PostgreSQL and backup container
 aifs start -i your-project
+
+# 2.1 Check status
+aifs status -i your-project
 
 # 3. Format the filesystem (one-time setup)
 aifs format -i your-project

@@ -200,6 +200,8 @@ ok "aifs ${TAG} installed to ${INSTALL_DIR}/${BIN}"
 
 # ─── Phase 2: Dependency checks & guided install ────────────────────
 
+NEEDS_POLICY_JSON=false
+
 if $IS_MACOS; then
   # ── macOS dependencies ────────────────────────────────────────
 
@@ -330,6 +332,24 @@ elif $IS_LINUX; then
     fi
   fi
 
+  # --- /etc/containers/policy.json (required by podman to pull images) ---
+  POLICY_FILE="/etc/containers/policy.json"
+  POLICY_DEFAULT='{"default":[{"type":"insecureAcceptAnything"}]}'
+  if [ -f "$POLICY_FILE" ]; then
+    ok "$POLICY_FILE exists"
+  else
+    warn "$POLICY_FILE not found — podman may refuse to pull images"
+    # Try to create it. Requires root; fall back gracefully if we can't.
+    if mkdir -p /etc/containers 2>/dev/null && printf '%s\n' "$POLICY_DEFAULT" > "$POLICY_FILE" 2>/dev/null; then
+      ok "Created $POLICY_FILE"
+    elif sudo mkdir -p /etc/containers 2>/dev/null && printf '%s\n' "$POLICY_DEFAULT" | sudo tee "$POLICY_FILE" >/dev/null 2>&1; then
+      ok "Created $POLICY_FILE (via sudo)"
+    else
+      warn "Could not create $POLICY_FILE (no write permission)"
+      NEEDS_POLICY_JSON=true
+    fi
+  fi
+
   # --- fusermount3 (FUSE) ---
   if has_fusermount; then
     FUSE_BIN="$(command -v fusermount3 2>/dev/null || command -v fusermount)"
@@ -399,5 +419,17 @@ if $IS_MACOS; then
   info "macOS notes:"
   info "  - Podman runs inside a VM (podman machine). Use 'podman machine' to manage it."
   info "  - For files outside your home directory, add volume mounts via podman machine."
+  echo ""
+fi
+
+if $NEEDS_POLICY_JSON; then
+  echo ""
+  warn "/etc/containers/policy.json is missing and could not be created automatically."
+  warn "Podman will refuse to pull images without it. Create it with:"
+  echo ""
+  echo "  ${BOLD}sudo mkdir -p /etc/containers${RESET}"
+  echo "  ${BOLD}echo '{\"default\":[{\"type\":\"insecureAcceptAnything\"}]}' | sudo tee /etc/containers/policy.json${RESET}"
+  echo ""
+  warn "Then re-run 'aifs start -i <instance-name>' to pull the required images."
   echo ""
 fi
