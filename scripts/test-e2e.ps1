@@ -18,9 +18,11 @@
 #   8. record time      record the PITR target time (UTC)
 #   9. write            create final files that should be rolled back
 #  10. umount           unmount the filesystem before restore
-#  11. restore          restore PostgreSQL to the recorded PITR time
+#  11. restore          restore PostgreSQL to the recorded PITR time (pause state)
 #  12. remount          mount the filesystem again
 #  13. verify           check that pre-target files exist and post-target files are gone
+#  14. verify pause     confirm filesystem is read-only in pause state
+#  15. promote          promote PostgreSQL out of pause, verify write access restored
 #
 # On exit the script cleans up the mount, the containers, and the temp work dir.
 [CmdletBinding()]
@@ -235,6 +237,29 @@ if (Test-Path "$MountPoint\file-final.txt") { throw "file-final.txt should have 
 if (Test-Path "$MountPoint\dir1\final.txt") { throw "dir1\final.txt should have been rolled back" }
 
 Write-Host "  [OK] pre-target files preserved, post-target files rolled back"
+
+Write-Host ""
+Write-Host "=== 14. verify pause state (read-only) ==="
+# In pause state PostgreSQL is in recovery and the filesystem must be read-only.
+$writeBlocked = $false
+try {
+    Set-Content -Path "$MountPoint\file-pause-write.txt" -Value "should fail" -ErrorAction Stop
+} catch {
+    $writeBlocked = $true
+}
+if (-not $writeBlocked) { throw "filesystem should be read-only in pause state but write succeeded" }
+Write-Host "  [OK] filesystem is read-only in pause state"
+
+Write-Host ""
+Write-Host "=== 15. promote and verify write access ==="
+Invoke-Aifs umount $MountPoint
+Invoke-Aifs restore --time "$TargetTimeUtc" --promote --force
+Wait-PostgresReady
+Invoke-Aifs mount $MountPoint -d
+Start-Sleep -Seconds 2
+Set-Content -Path "$MountPoint\file-post-promote.txt" -Value "post promote write" -NoNewline
+Test-FileContent -Path "$MountPoint\file-post-promote.txt" -Expected "post promote write"
+Write-Host "  [OK] write succeeded after promote"
 
 Write-Host ""
 Write-Host "[OK] aifs filesystem PITR end-to-end test completed successfully"
