@@ -12,7 +12,7 @@ In the AI Agent era, agents autonomously read, write, and modify files at scale 
   echo 'kernel.unprivileged_userns_clone=1' | sudo tee /etc/sysctl.d/99-rootless-podman.conf
   ```
 - **macOS**: `brew install podman` + `podman machine init` + `podman machine start`
-- **Windows**: Run `scripts/aifs-setup.ps1` to install WSL2 + Podman (see below), or install manually
+- **Windows**: Run `scripts/aifs-setup.ps1` to install WSL2 + Podman (see below), or install manually. Windows 10 users should review the [Windows 10 requirements](#windows-10-requirements) first.
 
 ### Windows setup script
 
@@ -73,15 +73,25 @@ cat ~/mnt/hello.txt                         # → hello aifs
 # 6. Create a snapshot before risky work
 aifs snapshot create --type full
 
-# 7. Agent does its work... (read, write, delete, experiment freely)
+# 7. Agent does its risky work... (read, write, delete, experiment freely)
 
 # 8. If something goes wrong, rewind first, then remount
 aifs umount ~/mnt
-aifs restore -i your-project --time "2026-06-15 14:30:00+00"
+aifs restore -i your-project --time "2026-06-15 14:30:00+00"  # Note! Just read-only
 aifs mount -i your-project ~/mnt -d
 
 # 9. Everything is back — nothing lost
 cat ~/mnt/hello.txt                         # still there
+
+# 10. Verify the data looks right, then promote to read-write
+#     restore leaves the filesystem read-only (paused at the target time).
+#     Once you've confirmed the files are what you expect, promote to resume
+#     normal read-write access — the filesystem travels back in time and
+#     becomes fully writable again.
+aifs umount ~/mnt
+aifs restore -i your-project --time "2026-06-15 14:30:00+00" --promote
+aifs mount -i your-project ~/mnt -d
+echo "back in time and fully writable" > ~/mnt/hello.txt
 ```
 
 ### Windows
@@ -107,15 +117,25 @@ type Z:\hello.txt                           # → hello aifs
 # 6. Create a snapshot before risky work
 aifs snapshot create --type full
 
-# 7. Agent does its work...
+# 7. Agent does its risky work...
 
 # 8. If something goes wrong, rewind first, then remount
 aifs umount Z:
-aifs restore -i your-project --time "2026-06-15 14:30:00+00"
+aifs restore -i your-project --time "2026-06-15 14:30:00+00"  # Note! Just read-only
 aifs mount -i your-project Z: -d
 
 # 9. Everything is back
 type Z:\hello.txt                           # still there
+
+# 10. Verify the data looks right, then promote to read-write
+#     restore leaves the filesystem read-only (paused at the target time).
+#     Once you've confirmed the files are what you expect, promote to resume
+#     normal read-write access — the filesystem travels back in time and
+#     becomes fully writable again.
+aifs umount Z:
+aifs restore -i your-project --time "2026-06-15 14:30:00+00" --promote
+aifs mount -i your-project Z: -d
+echo back in time and fully writable > Z:\hello.txt
 ```
 
 > [!IMPORTANT]
@@ -143,19 +163,6 @@ recommended setup for production or long-lived projects.
 ```bash
 # Store everything on a dedicated volume
 aifs config init --add your-project --base-dir /mnt/ssd/aifs
-```
-
-When `--base-dir` is set, the directory layout looks like this:
-
-```
-/mnt/ssd/aifs/
-├── config.yaml          # aifs configuration
-├── dbdata/              # data files (per instance)
-│   └── your-project/
-│       └── data/
-├── backup/              # backup repository
-│   ├── data/
-│   └── log/
 ```
 
 ### Best practices by platform
@@ -322,6 +329,19 @@ git clone https://github.com/mars-base/aifs.git
 cd aifs
 make build
 ```
+
+## Windows 10 requirements
+
+aifs requires WSL2, which has the following minimum requirements on Windows 10:
+
+| Architecture | Minimum version | Minimum build |
+|---|---|---|
+| x64 | Windows 10 Version 1903 | Build 18362.1049 |
+| ARM64 | Windows 10 Version 2004 | Build 19041 |
+
+Windows 10 also requires manually installing the **WSL2 Linux kernel update package** before running `aifs-setup.ps1`. See [Manual installation steps for older versions of WSL](https://learn.microsoft.com/en-us/windows/wsl/install-manual#step-4---download-the-linux-kernel-update-package) for the download links and instructions.
+
+Windows 11 does not require this step.
 
 ## License
 
