@@ -112,6 +112,9 @@ function Cleanup {
     try { Invoke-Aifs umount $MountPoint } catch { }
     try { & podman rm -f $BackupContainer 2>$null } catch { }
     try { Invoke-Aifs destroy --clean-data --force } catch { }
+    # destroy --clean-data restarts the backup container to remove the stanza;
+    # remove it again after destroy completes.
+    try { & podman rm -f $BackupContainer 2>$null } catch { }
     try { & podman rm -f $Container 2>$null } catch { }
     if (Test-Path $WorkDir) {
         Remove-Item -Recurse -Force $WorkDir -ErrorAction SilentlyContinue

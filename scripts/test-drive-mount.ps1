@@ -107,6 +107,8 @@ Invoke-Aifs destroy --clean-data --force
 
 Write-Host "=== 8. cleanup ==="
 $ErrorActionPreference = "Continue"
+# destroy --clean-data restarts the backup container to remove the stanza;
+# remove it again after destroy completes.
 & podman rm -f aifs-pg-drivemount $BackupContainer 2>$null
 Remove-Item -Recurse -Force $base -ErrorAction SilentlyContinue
 Write-Host "=== drive-letter mount test PASSED ==="
