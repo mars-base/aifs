@@ -81,13 +81,16 @@ func runBench(cmd *cobra.Command, args []string) error {
 	buf := make([]byte, blockSize)
 	rand.Read(buf) //nolint:gosec
 
+	var cacheWarnOnce sync.Once
 	dropCaches := func() {
 		if os.Getenv("SKIP_DROP_CACHES") == "1" {
 			return
 		}
 		f, err := os.OpenFile("/proc/sys/vm/drop_caches", os.O_WRONLY, 0)
 		if err != nil {
-			// Non-root: skip silently (same as JuiceFS behaviour).
+			cacheWarnOnce.Do(func() {
+				fmt.Fprintln(os.Stderr, "  [warn] cannot drop page cache (not root) — read results may be inflated by OS cache")
+			})
 			return
 		}
 		_, _ = f.WriteString("3\n")
