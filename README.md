@@ -94,7 +94,27 @@ aifs mount -i your-project ~/mnt -d
 echo "back in time and fully writable" > ~/mnt/hello.txt
 ```
 
-### Windows
+### Adding a second project instance
+
+Each project is an independent instance with its own database and mount point:
+
+```bash
+# Create a new instance
+aifs create -i project-b --base-dir /data/aifs/project-b
+
+aifs start  -i project-b
+aifs format -i project-b
+mkdir -p ~/mnt/project-b
+aifs mount  -i project-b ~/mnt/project-b -d
+
+# List all instances
+aifs list
+
+# Stop when done
+aifs stop -i project-b
+```
+
+### Windows (PowerShell)
 
 ```powershell
 # 1. Initialize config (choose a dedicated data directory)
@@ -163,6 +183,28 @@ recommended setup for production or long-lived projects.
 ```bash
 # Store everything on a dedicated volume
 aifs config init --add your-project --base-dir /mnt/ssd/aifs
+```
+
+### Multiple instances
+
+aifs supports multiple independent instances on the same machine. Use `aifs create` to add more:
+
+```bash
+# Create a second instance on a dedicated path
+aifs create -i project-b --base-dir /data/aifs/project-b
+
+# Start, format, and mount it
+aifs start -i project-b
+aifs format -i project-b
+mkdir -p ~/mnt/project-b
+aifs mount -i project-b ~/mnt/project-b -d
+```
+
+Each instance gets its own PostgreSQL container, port, and data directory. All commands accept `-i <name>` to target a specific instance. To start all instances at once:
+
+```bash
+aifs start --all
+aifs list           # overview of all instances
 ```
 
 ### Best practices by platform
