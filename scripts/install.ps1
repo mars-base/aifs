@@ -221,25 +221,18 @@ $env:CONTAINER_HOST = "tcp://localhost:2375"
 
 # These are the default image tags from aifs config.
 # Failures here are non-fatal -- images will be pulled on first use.
-try {
-    podman pull ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0 *>$null
-    Write-Ok "aifs-pg:18-2.58.0"
-} catch {
-    Write-Warn "aifs-pg pull failed, will retry on first use"
-}
-
-try {
-    podman pull ghcr.io/mars-base/aifs/aifs-backup:2.58.0 *>$null
-    Write-Ok "aifs-backup:2.58.0"
-} catch {
-    Write-Warn "aifs-backup pull failed, will retry on first use"
-}
-
-try {
-    podman pull docker.io/library/alpine:3.20 *>$null
-    Write-Ok "alpine:3.20 (helper)"
-} catch {
-    Write-Warn "alpine helper image pull failed, will retry on first use"
+foreach ($img in @(
+    "ghcr.io/mars-base/aifs/aifs-pg:18-2.58.0",
+    "ghcr.io/mars-base/aifs/aifs-backup:2.58.0",
+    "docker.io/library/alpine:3.20"
+)) {
+    $short = $img.Split("/")[-1]
+    podman pull $img
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "$short"
+    } else {
+        Write-Warn "$short pull failed, will retry on first use"
+    }
 }
 
 # --- Phase 5: Post-install notes ------------------------------------
