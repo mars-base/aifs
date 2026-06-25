@@ -174,6 +174,18 @@ try {
     Write-Warn "WSL /etc/wsl.conf config failed: $_"
 }
 
+# --- 3b-restart. Restart WSL VM so wsl.conf takes effect ---
+# wsl.conf (including [automount] options=metadata) is only read on VM
+# cold-boot. Shut down the VM now so the next wsl command cold-boots with
+# the new config. This is required for PostgreSQL initdb to succeed on
+# Windows paths (/mnt/c/...) — without metadata, chmod fails and PG exits.
+try {
+    wsl --shutdown 2>$null
+    Write-Ok "WSL VM restarted (wsl.conf applied)"
+} catch {
+    Write-Warn "wsl --shutdown failed: $_"
+}
+
 # --- 3c. Scheduled Task: WSL Wake at logon ---
 # WSL VM shuts down when all wsl.exe clients exit (vmIdleTimeout=-1 doesn't
 # work in WSL 2.7.8). This task runs a persistent "sleep infinity" at user

@@ -341,6 +341,35 @@ if (CmdExists "wsl") {
         Write-Host ""
     }
 }
+
+# Verify WSL is functional before proceeding -- if it isn't (e.g. kernel
+# update missing on Windows 10), stop here with a clear message rather
+# than letting "podman machine init" fail with a cryptic WSL import error.
+if (CmdExists "wsl") {
+    Write-Host "  Verifying WSL is functional..."
+    $wslReadyRc = Invoke-Wsl -WslArgs "--status"
+    if ($wslReadyRc -ne 0) {
+        Print-Result "WSL not ready" "fail"
+        Write-Host ""
+        Write-Host "  ============================================================"
+        Write-Host "    WSL2 IS NOT READY -- cannot proceed to Podman setup"
+        Write-Host "  ============================================================"
+        Write-Host ""
+        Write-Host "  On Windows 10, WSL2 requires a separate Linux kernel update"
+        Write-Host "  package that must be installed manually."
+        Write-Host ""
+        Write-Host "  Steps to fix:"
+        Write-Host "    1. Download the kernel update package:"
+        Write-Host "         https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
+        Write-Host "    2. Run the MSI to install it."
+        Write-Host "    3. Reboot the machine."
+        Write-Host "    4. Re-run the same install command -- setup will resume from here."
+        Write-Host ""
+        Pause-IfInteractive "Press any key to exit, then install the kernel package, reboot, and re-run..."
+        exit 1
+    }
+    Print-Result "WSL is functional" "ok"
+}
 Write-Host ""
 
 # ===========================================================
