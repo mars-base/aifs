@@ -15,9 +15,9 @@ import (
 func init() {
 	rootCmd.AddCommand(benchCmd)
 	benchCmd.Flags().StringVar(&benchBlockSize, "block-size", "1M", "size of each I/O block (e.g. 1M, 512K)")
-	benchCmd.Flags().StringVar(&benchBigSize, "big-file-size", "1G", "size of each big file (0 to skip, e.g. 1G, 512M)")
+	benchCmd.Flags().StringVar(&benchBigSize, "big-file-size", "100M", "size of each big file (0 to skip, e.g. 1G, 512M)")
 	benchCmd.Flags().StringVar(&benchSmallSize, "small-file-size", "128K", "size of each small file (e.g. 128K)")
-	benchCmd.Flags().UintVar(&benchSmallCount, "small-file-count", 100, "number of small files per thread")
+	benchCmd.Flags().UintVar(&benchSmallCount, "small-file-count", 10, "number of small files per thread")
 	benchCmd.Flags().UintVarP(&benchThreads, "threads", "p", 1, "number of concurrent threads")
 }
 
