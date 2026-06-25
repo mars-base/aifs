@@ -343,6 +343,42 @@ Windows 10 also requires manually installing the **WSL2 Linux kernel update pack
 
 Windows 11 does not require this step.
 
+## Benchmark
+
+aifs ships a built-in benchmark command to measure I/O performance on any path:
+
+```bash
+aifs bench ~/mnt/your-project          # default: 100 MiB big file, 10 small files, 1 thread
+aifs bench ~/mnt/your-project -p 4    # 4 concurrent threads
+aifs bench ~/mnt/your-project --big-file-size 0  # small files only
+aifs bench /tmp                        # baseline against local disk
+```
+
+### Reference results (SATA HDD, single thread)
+
+Measured on a SATA mechanical disk with the aifs data directory (`--base-dir`) on that same disk:
+
+```
+BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 10, NumThreads: 1
++------------------+-----------------+---------------+
+|       ITEM       |      VALUE      |     COST      |
++------------------+-----------------+---------------+
+| Write big file   | 1.30 MiB/s      | 77.10 s/file  |
+| Read big file    | 43.43 MiB/s     | 2.30 s/file   |
+| Write small file | 11.8 files/s    | 84.40 ms/file |
+| Read small file  | 1685.8 files/s  | 0.59 ms/file  |
+| Stat file        | 16246.6 files/s | 0.06 ms/file  |
++------------------+-----------------+---------------+
+```
+
+### Why the write speed is lower than a regular filesystem
+
+aifs is **not** designed for high-throughput sequential writes or large-scale storage. Every write to the aifs filesystem is durably stored as a row in PostgreSQL — each block goes through WAL, fsync, and buffer management before it is acknowledged. This is what makes the filesystem a time machine: every change is transactional and can be rewound to any point in history.
+
+**aifs is designed for a different goal**: letting your database and filesystem **travel back in time together**. If you need to ask "what did this file look like at 14:02 yesterday?", or "undo everything my agent wrote in the last 10 minutes", aifs is the right tool. If you need to stream 1 GB/s of writes, a regular filesystem is the right tool.
+
+For best write performance, place `--base-dir` on a **local NVMe SSD**. Avoid spinning HDDs and network-attached storage for the PostgreSQL data directory.
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, educational, academic, non-profit, and government use. Commercial use requires a separate license.
