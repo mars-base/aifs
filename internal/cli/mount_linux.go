@@ -13,7 +13,12 @@ import (
 )
 
 func mountInBackground(mountPoint string) error {
-	args := []string{os.Args[0]}
+	self, err := selfExePath()
+	if err != nil {
+		return fmt.Errorf("resolving aifs binary path: %w", err)
+	}
+
+	args := []string{self}
 	if cfgPath != "" {
 		args = append(args, "-c", cfgPath)
 	}
@@ -35,7 +40,7 @@ func mountInBackground(mountPoint string) error {
 		Files: []*os.File{devNull, logFile, logFile},
 		Sys:   &syscall.SysProcAttr{Setsid: true},
 	}
-	p, err := os.StartProcess(os.Args[0], args, attr)
+	p, err := os.StartProcess(self, args, attr)
 	if err != nil {
 		return fmt.Errorf("starting background mount: %w", err)
 	}
