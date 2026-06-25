@@ -396,10 +396,17 @@ Windows 11 does not require this step.
 aifs ships a built-in benchmark command to measure I/O performance on any path:
 
 ```bash
+# Linux / macOS
 aifs bench ~/mnt/your-project          # default: 100 MiB big file, 10 small files, 1 thread
 aifs bench ~/mnt/your-project -p 4    # 4 concurrent threads
 aifs bench ~/mnt/your-project --big-file-size 0  # small files only
 aifs bench /tmp                        # baseline against local disk
+```
+
+```powershell
+# Windows — pass the drive letter directly
+aifs bench Z:
+aifs bench Z: -p 4
 ```
 
 ### Reference results (SATA HDD, single thread)
@@ -418,6 +425,25 @@ BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 
 | Stat file        | 16246.6 files/s | 0.06 ms/file  |
 +------------------+-----------------+---------------+
 ```
+
+### Reference results (NVMe SSD, single thread)
+
+Same machine, aifs data directory on a local NVMe SSD (LUKS-encrypted):
+
+```
+BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 10, NumThreads: 1
++------------------+-----------------+--------------+
+|       ITEM       |      VALUE      |     COST     |
++------------------+-----------------+--------------+
+| Write big file   | 9.11 MiB/s      | 10.97 s/file |
+| Read big file    | 45.12 MiB/s     | 2.22 s/file  |
+| Write small file | 300.6 files/s   | 3.33 ms/file |
+| Read small file  | 2023.1 files/s  | 0.49 ms/file |
+| Stat file        | 13807.5 files/s | 0.07 ms/file |
++------------------+-----------------+--------------+
+```
+
+Placing `--base-dir` on NVMe delivers **~11× faster big-file writes** and **~23× faster small-file writes** compared to SATA HDD. The bottleneck is PostgreSQL WAL fsync latency, which NVMe reduces dramatically. Read speeds are similar because both measurements were taken without root (page cache not dropped).
 
 ### Why the write speed is lower than a regular filesystem
 

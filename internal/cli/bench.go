@@ -105,7 +105,8 @@ func runBench(cmd *cobra.Command, args []string) error {
 	// ── helpers ──────────────────────────────────────────────────────────────
 
 	// runParallel runs fn(threadIndex) in `threads` goroutines and returns
-	// the wall-clock duration.
+	// the wall-clock duration. Always returns at least 1µs to avoid division
+	// by zero when operations complete faster than timer resolution.
 	runParallel := func(fn func(int)) time.Duration {
 		var wg sync.WaitGroup
 		start := time.Now()
@@ -115,7 +116,11 @@ func runBench(cmd *cobra.Command, args []string) error {
 			go func() { defer wg.Done(); fn(i) }()
 		}
 		wg.Wait()
-		return time.Since(start)
+		d := time.Since(start)
+		if d < time.Microsecond {
+			d = time.Microsecond
+		}
+		return d
 	}
 
 	// ── big file ─────────────────────────────────────────────────────────────
