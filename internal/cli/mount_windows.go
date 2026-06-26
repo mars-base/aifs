@@ -38,7 +38,11 @@ func mountInBackgroundWithFlags(mountPoint string, creationFlags uint32) error {
 	if cfgPath != "" {
 		args = append(args, "-c", cfgPath)
 	}
-	args = append(args, "-i", cfgInstance, "mount", mountPoint)
+	if mountURL != "" {
+		args = append(args, "mount", "--url", mountURL, "--prefix", mountPrefix, mountPoint)
+	} else {
+		args = append(args, "-i", cfgInstance, "mount", mountPoint)
+	}
 
 	logFile, err := os.CreateTemp("", "aifs-mount-*.log")
 	if err != nil {
