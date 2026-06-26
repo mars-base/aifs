@@ -106,6 +106,11 @@ onto a local directory. By default it runs in the foreground.`,
 		if err != nil {
 			return err
 		}
+		// EnsureMachine also runs EnsurePodmanService on Windows, which refreshes
+		// the portproxy rule for port 2375 after a WSL restart (IP change).
+		if err := pm.EnsureMachine(); err != nil {
+			return err
+		}
 		if err := pm.EnsureContainer(); err != nil {
 			return err
 		}
