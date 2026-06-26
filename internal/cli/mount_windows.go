@@ -52,6 +52,7 @@ func mountInBackgroundWithFlags(mountPoint string, creationFlags uint32) error {
 	defer null.Close()
 
 	attr := &os.ProcAttr{
+		Env:   os.Environ(), // inherit full environment (includes CONTAINER_HOST)
 		Files: []*os.File{null, logFile, logFile},
 		Sys: &windows.SysProcAttr{
 			CreationFlags: creationFlags,
