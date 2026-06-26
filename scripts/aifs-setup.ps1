@@ -740,3 +740,15 @@ if ($wslOk -and $pmOk) {
 }
 
 Write-Host "Done."
+
+# Check if aifs is accessible in the current session
+if (-not (Get-Command aifs -ErrorAction SilentlyContinue)) {
+    Write-Host ""
+    Write-Host "  ! 'aifs' command is not available in this session." -ForegroundColor Yellow
+    Write-Host "    Install aifs first, then sign out and sign back in (or open a new" -ForegroundColor Yellow
+    Write-Host "    PowerShell window) for the PATH change to take effect." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  -> Install aifs:" -ForegroundColor Cyan
+    Write-Host "     irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/install.ps1 | iex" -ForegroundColor Cyan
+    Write-Host ""
+}
