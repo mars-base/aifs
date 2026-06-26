@@ -119,12 +119,14 @@ func init() {
 	mountCmd.Flags().BoolVarP(&mountBackground, "background", "d", false, "run mount in the background")
 	mountCmd.Flags().StringVar(&mountURL, "url", "", "PostgreSQL URL to mount directly (skips instance config)")
 	mountCmd.Flags().StringVar(&mountPrefix, "prefix", "aifs_", "table prefix to use with --url")
+	mountCmd.Flags().BoolVarP(&mountList, "list", "l", false, "list active aifs mount points")
 }
 
 var (
 	mountBackground bool
 	mountURL        string
 	mountPrefix     string
+	mountList       bool
 )
 
 var mountCmd = &cobra.Command{
@@ -138,8 +140,27 @@ requiring an aifs instance configuration:
 
   aifs mount /mnt/aifs --url "postgresql://user:pass@host:5432/db"
   aifs mount Z: -d --url "postgresql://user:pass@host:5432/db" --prefix aifs_`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.RangeArgs(0, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// -l / --list: scan system mount table for active aifs mounts.
+		if mountList {
+			mounts, err := activeAIFSMounts()
+			if err != nil {
+				return fmt.Errorf("listing mounts: %w", err)
+			}
+			if len(mounts) == 0 {
+				fmt.Println("no active aifs mounts")
+				return nil
+			}
+			for _, m := range mounts {
+				fmt.Println(m)
+			}
+			return nil
+		}
+
+		if len(args) == 0 {
+			return fmt.Errorf("mountpoint argument required (or use -l to list active mounts)")
+		}
 		mountPoint := args[0]
 
 		// --url mode: skip instance config and podman entirely.

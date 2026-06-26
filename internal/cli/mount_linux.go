@@ -22,7 +22,11 @@ func mountInBackground(mountPoint string) error {
 	if cfgPath != "" {
 		args = append(args, "-c", cfgPath)
 	}
-	args = append(args, "-i", cfgInstance, "mount", mountPoint)
+	if mountURL != "" {
+		args = append(args, "mount", "--url", mountURL, "--prefix", mountPrefix, mountPoint)
+	} else {
+		args = append(args, "-i", cfgInstance, "mount", mountPoint)
+	}
 
 	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
