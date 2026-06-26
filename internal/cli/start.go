@@ -178,9 +178,6 @@ func doStart(c *config.Config) error {
 		if err := pt.EnsureStanza(); err != nil {
 			fmt.Printf("  [!] stanza create warning: %v\n", err)
 		}
-		if err := pt.CheckStanza(); err != nil {
-			fmt.Printf("  [!] stanza check warning: %v\n", err)
-		}
 
 		stanza := c.PITR.PgBackRestStanza
 		archiveCmd := fmt.Sprintf("pgbackrest --stanza=%s archive-push %%p", stanza)
@@ -194,6 +191,10 @@ func doStart(c *config.Config) error {
 
 		pm.Exec("psql", "-U", c.Postgres.User, "-d", c.Postgres.Database, "-c", "SELECT pg_reload_conf()")
 		pm.Exec("psql", "-U", c.Postgres.User, "-d", c.Postgres.Database, "-c", "SELECT pg_switch_wal()")
+
+		if err := pt.CheckStanza(); err != nil {
+			fmt.Printf("  [!] stanza check warning: %v\n", err)
+		}
 
 		fmt.Println("-> Waiting for WAL archiver to catch up...")
 		for i := 0; i < 30; i++ {
