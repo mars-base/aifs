@@ -167,6 +167,15 @@ command=podman system service -t 0 tcp://0.0.0.0:2375
 options = metadata
 "@
 $bootB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bootConfig))
+# Read existing /etc/wsl.conf to detect changes (avoid unnecessary shutdown on upgrade).
+$existingWslConf = ""
+try {
+    $existingWslConf = wsl -d podman-machine-default -u root --exec sh -c "cat /etc/wsl.conf 2>/dev/null" 2>$null
+} catch {}
+$needWslConfShutdown = (
+    ($existingWslConf -notmatch 'command\s*=\s*podman system service') -or
+    ($existingWslConf -notmatch 'options\s*=\s*metadata')
+)
 try {
     wsl -d podman-machine-default -u root --exec sh -c "echo $bootB64 | base64 -d > /etc/wsl.conf" 2>$null
     Write-Ok "/etc/wsl.conf [boot] configured"
@@ -175,15 +184,18 @@ try {
 }
 
 # --- 3b-restart. Restart WSL VM so wsl.conf takes effect ---
-# wsl.conf (including [automount] options=metadata) is only read on VM
-# cold-boot. Shut down the VM now so the next wsl command cold-boots with
-# the new config. This is required for PostgreSQL initdb to succeed on
-# Windows paths (/mnt/c/...) — without metadata, chmod fails and PG exits.
-try {
-    wsl --shutdown 2>$null
-    Write-Ok "WSL VM restarted (wsl.conf applied)"
-} catch {
-    Write-Warn "wsl --shutdown failed: $_"
+# wsl.conf (including [automount] options=metadata) is only read on VM cold-boot.
+# Only shut down if the config actually changed — on upgrade this avoids killing
+# running containers and aifs mounts.
+if ($needWslConfShutdown) {
+    try {
+        wsl --shutdown 2>$null
+        Write-Ok "WSL VM restarted (wsl.conf applied)"
+    } catch {
+        Write-Warn "wsl --shutdown failed: $_"
+    }
+} else {
+    Write-Ok "/etc/wsl.conf already configured, skipped shutdown"
 }
 
 # --- 3c. Scheduled Task: WSL Wake at logon ---
