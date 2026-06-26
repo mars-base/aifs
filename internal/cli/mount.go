@@ -109,6 +109,7 @@ onto a local directory. By default it runs in the foreground.`,
 		if err := pm.EnsureContainer(); err != nil {
 			return err
 		}
+		pm.EnsurePGPortProxy()
 
 		fmt.Println("-> Waiting for PostgreSQL to be ready...")
 		for i := 0; i < 60; i++ {
