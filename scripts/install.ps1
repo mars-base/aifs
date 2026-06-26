@@ -264,8 +264,16 @@ Write-Host "  - Mount to a drive letter (Z:, X:, etc.) for session-independent a
 Write-Host "  - Directory mounts require an interactive session (logged-on console)."
 Write-Host "  - Podman uses WSL2 as its backend; ensure WSL2 is installed and working."
 Write-Host ""
-Write-Host "If 'aifs version' says the command is not found, this shell is using a"
-Write-Host "stale PATH from before the install. Open a new terminal, or sign out and"
-Write-Host "sign back in, then retry. (aifs was added to your user PATH at:"
-Write-Host "  $installDir )"
-Write-Host ""
+# Check if aifs is accessible in the current session
+if (-not (Get-Command aifs -ErrorAction SilentlyContinue)) {
+    Write-Host ""
+    Write-Host "  ! 'aifs' command is not available in this session." -ForegroundColor Yellow
+    Write-Host "    This is normal — the PATH change takes effect in new sessions only." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  -> Sign out and sign back in, or open a new PowerShell window," -ForegroundColor Cyan
+    Write-Host "     then run:  aifs version" -ForegroundColor Cyan
+    Write-Host ""
+} else {
+    Write-Host "  aifs is ready: $(aifs version 2>&1)" -ForegroundColor Green
+    Write-Host ""
+}
