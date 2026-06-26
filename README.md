@@ -351,6 +351,23 @@ aifs snapshot create --type full
 aifs snapshot create --type diff
 ```
 
+### Deleting snapshots and storage reclaim
+
+```bash
+aifs snapshot list                          # list all snapshots
+aifs snapshot delete 20260601-120000F       # delete by name
+```
+
+When you delete a `full` snapshot, pgBackRest automatically cleans up:
+
+- The full backup data itself
+- All WAL segments that were only needed to recover from that backup
+- Any dependent `diff`/`incr` snapshots that relied on it
+
+Each `full` backup is a self-contained baseline. WAL segments before the oldest remaining `full` are no longer needed by any recovery point and are freed immediately. This means storage does **not** grow indefinitely — old backups and their WAL are fully released once deleted.
+
+You can also let pgBackRest manage retention automatically. Set `repo1-retention-full` in your pgBackRest config to keep only the N most recent full backups; older ones (and their WAL) are expired automatically after each new full backup completes.
+
 ## Direct PostgreSQL URL mount
 
 aifs can mount any PostgreSQL database directly — without creating a local instance or running a container. Pass `--url` to `format` and `mount`:
