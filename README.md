@@ -479,23 +479,21 @@ No such file or directory
 
 **Cause**
 
-After `wsl --shutdown` (which can be triggered by an aifs upgrade or a manual restart), the WSL DrvFs 9p connection to non-C: drives becomes stale. The mount entry still exists in `/proc/mounts` but the underlying 9p socket is broken, causing `Input/output error` on any access.
+After a WSL shutdown or machine restart, the WSL DrvFs 9p connection to non-C: drives becomes stale. The mount entry still exists in `/proc/mounts` but the underlying 9p socket is broken, causing `Input/output error` on any access.
 
 **Fix**
 
-Remount the affected drive inside WSL (no shutdown needed):
+Restart the machine, then wait 1–2 minutes for WSL to fully initialize. Verify WSL is running:
 
 ```powershell
-# Replace E: with whichever drive your --base-dir is on
-wsl -d podman-machine-default -u root --exec sh -c "umount /mnt/e && mount -t drvfs E: /mnt/e -o metadata"
+wsl -l -v
 ```
 
-Then remove the stale container and start again:
+The `podman-machine-default` distro should show `Running`. Then restart each instance:
 
 ```powershell
-$env:CONTAINER_HOST = "tcp://localhost:2375"
-podman rm -f aifs-pg-<instance>
 aifs -i <instance> start
+aifs -i <instance> mount <mountpoint>
 ```
 
 ## License
