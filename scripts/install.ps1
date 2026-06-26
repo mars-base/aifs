@@ -263,6 +263,7 @@ Write-Host "Windows notes:"
 Write-Host "  - Mount to a drive letter (Z:, X:, etc.) for session-independent access."
 Write-Host "  - Directory mounts require an interactive session (logged-on console)."
 Write-Host "  - Podman uses WSL2 as its backend; ensure WSL2 is installed and working."
+Write-Host "  - After logging in, wait 1-2 minutes for WSL to start before running aifs."
 Write-Host ""
 # Check if aifs is accessible in the current session
 if (-not (Get-Command aifs -ErrorAction SilentlyContinue)) {

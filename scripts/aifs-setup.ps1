@@ -740,6 +740,8 @@ if ($wslOk -and $pmOk) {
 }
 
 Write-Host "Done."
+Write-Host ""
+Write-Host "  Note: After logging in, wait 1-2 minutes for WSL to start before running aifs." -ForegroundColor Yellow
 
 # Check if aifs is accessible in the current session
 if (-not (Get-Command aifs -ErrorAction SilentlyContinue)) {
