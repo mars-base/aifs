@@ -368,6 +368,26 @@ Each `full` backup is a self-contained baseline. WAL segments before the oldest 
 
 You can also let pgBackRest manage retention automatically. Set `repo1-retention-full` in your pgBackRest config to keep only the N most recent full backups; older ones (and their WAL) are expired automatically after each new full backup completes.
 
+### Managing storage growth
+
+If backup storage has grown large over time (many accumulated `diff`/`incr` snapshots and WAL), the recommended way to reclaim space is:
+
+```bash
+# 1. Take a new full backup as the new baseline
+aifs snapshot create -i your-project --type full
+
+# 2. List all snapshots and identify old ones to remove
+aifs snapshot list -i your-project
+
+# 3. Delete old full backups (and all their dependents + WAL are cleaned up automatically)
+aifs snapshot delete -i your-project 20260101-000000F
+aifs snapshot delete -i your-project 20260201-000000F
+```
+
+After deleting old full backups, only the new full (and any snapshots taken after it) remain. All WAL and dependent `diff`/`incr` from the deleted sets are freed immediately.
+
+> **Tip:** Do this periodically for each instance if you notice backup storage growing unexpectedly. A single new `full` + deletion of all prior backups resets the storage footprint to just the current database size.
+
 ## Direct PostgreSQL URL mount
 
 aifs can mount any PostgreSQL database directly — without creating a local instance or running a container. Pass `--url` to `format` and `mount`:
