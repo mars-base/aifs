@@ -12,7 +12,7 @@ In the AI Agent era, agents autonomously read, write, and modify files at scale 
   echo 'kernel.unprivileged_userns_clone=1' | sudo tee /etc/sysctl.d/99-rootless-podman.conf
   ```
 - **macOS**: `brew install podman` + `podman machine init` + `podman machine start`
-- **Windows**: Run `scripts/aifs-setup.ps1` to install WSL2 + Podman (see below), or install manually. Windows 10 users should review the [Windows 10 requirements](#windows-10-requirements) first.
+- **Windows**: Run `scripts/aifs-setup.ps1` to install WSL2 + Podman (see below), or install manually. Windows 10 users should review the [Windows 10 requirements](#windows-10-requirements) first. If your data directory is on a non-C: drive, see [known issues](#windows-io-errors-or-service-failure-after-upgrade-when-using-a-non-c-drive).
 
 ### Windows setup script
 
@@ -461,25 +461,13 @@ For best write performance, place `--base-dir` on a **local NVMe SSD**. Avoid sp
 
 ## Troubleshooting
 
-### Windows: `aifs start` fails with `Input/output error` on E: (or other drives)
+### Windows: IO errors or service failure after upgrade when using a non-C: drive
 
-**Symptom**
-
-```
-Error: creating backup directory E:\aifs\backup\data (wsl): wsl mkdir /mnt/e/aifs/backup/data:
-exit status 1 (output: mkdir: cannot create directory '/mnt/e/aifs': Input/output error)
-```
-
-Or the container fails to start with:
-
-```
-Error: unable to start container "...": crun: cannot stat `/mnt/e/aifs/pgbackrest-aifs-pg-ai01.conf`:
-No such file or directory
-```
+If your aifs data directory (`--base-dir`) is on a non-C: drive (e.g. D:, E:), running `install.ps1` to upgrade or restarting the machine may cause IO errors and prevent instances from starting.
 
 **Cause**
 
-After a WSL shutdown or machine restart, the WSL DrvFs 9p connection to non-C: drives becomes stale. The mount entry still exists in `/proc/mounts` but the underlying 9p socket is broken, causing `Input/output error` on any access.
+After WSL restarts, the DrvFs 9p connection to non-C: drives becomes stale. Mount points like `/mnt/d` and `/mnt/e` still appear in `/proc/mounts` but the underlying socket is broken, so any access returns `Input/output error`.
 
 **Fix**
 
@@ -493,7 +481,7 @@ The `podman-machine-default` distro should show `Running`. Then restart each ins
 
 ```powershell
 aifs -i <instance> start
-aifs -i <instance> mount <mountpoint>
+aifs -i <instance> mount <mountpoint> -d
 ```
 
 ## License
