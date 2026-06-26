@@ -103,11 +103,18 @@ Examples:
 			return fmt.Errorf("failed to save config: %w", err)
 		}
 
-		// 3. Rebuild backup container to remove destroyed instance's entries
+		// 3. Rebuild or remove backup container depending on remaining instances.
 		if cfg.PITR.Enabled {
 			bm, err := podman.NewBackupManager(cfg)
 			if err != nil {
 				fmt.Printf("  [!]  Warning: cannot rebuild backup container: %v\n", err)
+			} else if len(cfg.Instances) == 0 {
+				// No instances left — stop and remove the shared backup container.
+				if err := bm.Destroy(); err != nil {
+					fmt.Printf("  [!]  Warning: failed to remove backup container: %v\n", err)
+				} else {
+					fmt.Println("  [OK] backup container removed (no instances remaining)")
+				}
 			} else {
 				// Ensure SSH key exists before rebuilding backup container
 				if _, err := bm.EnsureSSHKey(); err != nil {

@@ -444,6 +444,16 @@ func (m *BackupManager) StopBackupContainer() error {
 	return nil
 }
 
+// Destroy stops and removes the shared backup container. Used when the last
+// instance is destroyed so no orphaned backup container is left behind.
+func (m *BackupManager) Destroy() error {
+	m.run("stop", m.cfg.Backup.ContainerName)
+	if _, err := m.run("rm", "-f", m.cfg.Backup.ContainerName); err != nil {
+		return fmt.Errorf("removing backup container: %w", err)
+	}
+	return nil
+}
+
 // BackupContainerStatus returns the backup container status.
 func (m *BackupManager) BackupContainerStatus() (*ContainerStatus, error) {
 	out, err := m.run("ps", "-a",
