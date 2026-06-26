@@ -81,18 +81,6 @@ func runBench(cmd *cobra.Command, args []string) error {
 	buf := make([]byte, blockSize)
 	rand.Read(buf) //nolint:gosec
 
-	dropCaches := func() {
-		if os.Getenv("SKIP_DROP_CACHES") == "1" {
-			return
-		}
-		f, err := os.OpenFile("/proc/sys/vm/drop_caches", os.O_WRONLY, 0)
-		if err != nil {
-			return
-		}
-		_, _ = f.WriteString("3\n")
-		_ = f.Close()
-	}
-
 	type row struct {
 		item, value, cost string
 	}
@@ -149,7 +137,6 @@ func runBench(cmd *cobra.Command, args []string) error {
 			value: fmt.Sprintf("%.2f MiB/s", totalMiB/secs),
 			cost:  fmt.Sprintf("%.2f s/file", secs/float64(threads)),
 		})
-		dropCaches()
 
 		fmt.Printf("Reading %d big file(s) × %d thread(s) ...\n", 1, threads)
 		readBuf := make([]byte, blockSize)
@@ -174,7 +161,6 @@ func runBench(cmd *cobra.Command, args []string) error {
 			value: fmt.Sprintf("%.2f MiB/s", totalMiB/secs),
 			cost:  fmt.Sprintf("%.2f s/file", secs/float64(threads)),
 		})
-		dropCaches()
 	}
 
 	// ── small files ───────────────────────────────────────────────────────────
@@ -212,7 +198,6 @@ func runBench(cmd *cobra.Command, args []string) error {
 			value: fmt.Sprintf("%.1f files/s", totalFiles/secs),
 			cost:  fmt.Sprintf("%.2f ms/file", secs*1000/totalFiles),
 		})
-		dropCaches()
 
 		fmt.Printf("Reading %d small file(s) × %d thread(s) ...\n",
 			smallCount, threads)
@@ -239,7 +224,6 @@ func runBench(cmd *cobra.Command, args []string) error {
 			value: fmt.Sprintf("%.1f files/s", totalFiles/secs),
 			cost:  fmt.Sprintf("%.2f ms/file", secs*1000/totalFiles),
 		})
-		dropCaches()
 
 		fmt.Printf("Stat %d small file(s) × %d thread(s) ...\n",
 			smallCount, threads)
