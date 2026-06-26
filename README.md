@@ -459,6 +459,45 @@ aifs is **not** designed for high-throughput sequential writes or large-scale st
 
 For best write performance, place `--base-dir` on a **local NVMe SSD**. Avoid spinning HDDs and network-attached storage for the PostgreSQL data directory.
 
+## Troubleshooting
+
+### Windows: `aifs start` fails with `Input/output error` on E: (or other drives)
+
+**Symptom**
+
+```
+Error: creating backup directory E:\aifs\backup\data (wsl): wsl mkdir /mnt/e/aifs/backup/data:
+exit status 1 (output: mkdir: cannot create directory '/mnt/e/aifs': Input/output error)
+```
+
+Or the container fails to start with:
+
+```
+Error: unable to start container "...": crun: cannot stat `/mnt/e/aifs/pgbackrest-aifs-pg-ai01.conf`:
+No such file or directory
+```
+
+**Cause**
+
+After `wsl --shutdown` (which can be triggered by an aifs upgrade or a manual restart), the WSL DrvFs 9p connection to non-C: drives becomes stale. The mount entry still exists in `/proc/mounts` but the underlying 9p socket is broken, causing `Input/output error` on any access.
+
+**Fix**
+
+Remount the affected drive inside WSL (no shutdown needed):
+
+```powershell
+# Replace E: with whichever drive your --base-dir is on
+wsl -d podman-machine-default -u root --exec sh -c "umount /mnt/e && mount -t drvfs E: /mnt/e -o metadata"
+```
+
+Then remove the stale container and start again:
+
+```powershell
+$env:CONTAINER_HOST = "tcp://localhost:2375"
+podman rm -f aifs-pg-<instance>
+aifs -i <instance> start
+```
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, educational, academic, non-profit, and government use. Commercial use requires a separate license.
