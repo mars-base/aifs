@@ -351,6 +351,71 @@ aifs snapshot create --type full
 aifs snapshot create --type diff
 ```
 
+## Direct PostgreSQL URL mount
+
+aifs can mount any PostgreSQL database directly — without creating a local instance or running a container. Pass `--url` to `format` and `mount`:
+
+```bash
+# Initialize a filesystem in an existing PostgreSQL database
+aifs format --url "postgresql://user:pass@host:5432/dbname"
+
+# Mount it (foreground)
+aifs mount --url "postgresql://user:pass@host:5432/dbname" ~/mnt/aifs
+
+# Mount in background
+aifs mount --url "postgresql://user:pass@host:5432/dbname" ~/mnt/aifs -d
+
+# List active mounts
+aifs mount -l
+```
+
+On Windows, use a drive letter:
+
+```powershell
+aifs mount Z: -d --url "postgresql://user:pass@host:5432/dbname"
+```
+
+The `--prefix` flag sets the table name prefix (default: `aifs_`). Use it when sharing a database with other applications:
+
+```bash
+aifs format --url "postgresql://..." --prefix myfs_
+aifs mount  --url "postgresql://..." --prefix myfs_ ~/mnt/aifs -d
+```
+
+### Shared storage across multiple machines
+
+Because all filesystem state lives in PostgreSQL, the same database can be mounted on multiple machines simultaneously — each machine reads and writes through its own FUSE mount while PostgreSQL handles concurrency.
+
+**Use cases:**
+
+- **Team shared archive** — mount the same dataset on every developer's machine; changes are immediately visible to all
+- **Cross-platform access** — mount on Linux, macOS, and Windows at the same time
+- **Multi-site access** — use a cloud PostgreSQL instance (e.g. AWS RDS, Supabase, Neon) to access a single archive from different locations
+
+**Example: cloud PostgreSQL shared archive**
+
+```bash
+# One-time setup: initialize the filesystem in a cloud PG instance
+aifs format --url "postgresql://user:pass@db.example.com:5432/archive"
+
+# Mount on any machine, anywhere
+aifs mount --url "postgresql://user:pass@db.example.com:5432/archive" ~/archive -d
+```
+
+You can also use a local aifs instance as the PostgreSQL backend and share it with other machines on the same network by pointing them at the instance's host port:
+
+```bash
+# On machine A: start a local instance and share it
+aifs start -i shared
+aifs format -i shared
+# expose port (default 15432) to the network
+
+# On machine B: mount directly via URL
+aifs mount --url "postgresql://dba:pass@192.168.1.100:15432/aifs" ~/shared -d
+```
+
+> **Note:** concurrent writes to the same file from multiple mounts are serialized by PostgreSQL transactions. Best suited for workloads where different machines write to different files.
+
 ## Destroying an instance
 
 When you no longer need an instance, `aifs destroy` removes it:
