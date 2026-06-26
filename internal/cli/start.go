@@ -141,6 +141,11 @@ func doStart(c *config.Config) error {
 		return err
 	}
 
+	// 7a. On Windows, ensure a netsh portproxy rule forwards the PG host port
+	// from Windows localhost into the WSL VM (host networking binds to WSL's
+	// localhost, not Windows').
+	pm.EnsurePGPortProxy()
+
 	// Wait for PostgreSQL to finish initialization (initdb + init scripts).
 	fmt.Println("-> Waiting for PostgreSQL to be ready...")
 	for i := 0; i < 60; i++ {

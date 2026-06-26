@@ -7,3 +7,6 @@ package podman
 func EnsurePodmanService() error {
 	return nil
 }
+
+// EnsurePGPortProxy is a no-op on Unix — no portproxy needed.
+func (m *Manager) EnsurePGPortProxy() {}

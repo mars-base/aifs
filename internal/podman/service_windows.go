@@ -113,27 +113,34 @@ func tcpServiceListening(distro string) bool {
 // ensurePortproxy adds or updates a netsh portproxy rule that forwards
 // localhost:2375 into the WSL VM.
 func ensurePortproxy(distro string) {
+	ensurePortproxyPort(distro, 2375)
+}
+
+// ensurePortproxyPort adds or updates a netsh portproxy rule for an arbitrary
+// port (used to forward PG host ports into the WSL VM).
+func ensurePortproxyPort(distro string, port int) {
 	wslIP := getWSLIP(distro)
 	if wslIP == "" {
 		return
 	}
+	portStr := fmt.Sprintf("%d", port)
 
 	// Skip if the rule already points to the correct IP.
 	showCmd := exec.Command("netsh", "interface", "portproxy", "show", "v4tov4")
 	hideWindow(showCmd)
-	if out, _ := showCmd.Output(); strings.Contains(string(out), wslIP+":2375") {
+	if out, _ := showCmd.Output(); strings.Contains(string(out), wslIP+":"+portStr) {
 		return
 	}
 
 	// Delete any stale rule, then add the current one.
 	delCmd := exec.Command("netsh", "interface", "portproxy", "delete", "v4tov4",
-		"listenaddress=0.0.0.0", "listenport=2375")
+		"listenaddress=0.0.0.0", "listenport="+portStr)
 	hideWindow(delCmd)
 	delCmd.Run()
 
 	addCmd := exec.Command("netsh", "interface", "portproxy", "add", "v4tov4",
-		"listenaddress=0.0.0.0", "listenport=2375",
-		"connectaddress="+wslIP, "connectport=2375")
+		"listenaddress=0.0.0.0", "listenport="+portStr,
+		"connectaddress="+wslIP, "connectport="+portStr)
 	hideWindow(addCmd)
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "  [!] portproxy add failed: %v\n%s\n", err, strings.TrimSpace(string(out)))
@@ -157,6 +164,19 @@ func getWSLIP(distro string) string {
 		out = out2
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// EnsurePGPortProxy adds a netsh portproxy rule forwarding the configured
+// PostgreSQL host port from Windows localhost into the WSL VM.  This is
+// required when the container runs with host networking (the default on
+// Windows) because WSL host-networking binds to the WSL VM's localhost, not
+// the Windows host's localhost.
+func (m *Manager) EnsurePGPortProxy() {
+	distro := os.Getenv("PODMAN_MACHINE_NAME")
+	if distro == "" {
+		distro = "podman-machine-default"
+	}
+	ensurePortproxyPort(distro, m.cfg.Podman.HostPort)
 }
 
 // Allows tests to reset the once guard.
