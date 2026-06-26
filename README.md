@@ -405,10 +405,13 @@ aifs mount --url "postgresql://user:pass@db.example.com:5432/archive" ~/archive 
 You can also use a local aifs instance as the PostgreSQL backend and share it with other machines on the same network by pointing them at the instance's host port:
 
 ```bash
-# On machine A: start a local instance and share it
+# On machine A: create, start, and format a local instance
+aifs create -i shared
 aifs start -i shared
 aifs format -i shared
-# expose port (default 15432) to the network
+aifs status -i shared   # shows the PostgreSQL connection URL (127.0.0.1:port)
+                        # replace 127.0.0.1 with machine A's actual LAN IP
+                        # and ensure that port is open in the firewall
 
 # On machine B: mount directly via URL
 aifs mount --url "postgresql://dba:pass@192.168.1.100:15432/aifs" ~/shared -d
