@@ -336,7 +336,7 @@ aifs restore -i your-project --time "2026-06-24 18:30:00+08"    # same moment, U
 
 ## Snapshot types
 
-`aifs snapshot create` supports three pgBackRest backup types:
+`aifs snapshot create` supports three backup types:
 
 | Type | Description | Use case |
 |------|-------------|----------|
@@ -358,7 +358,7 @@ aifs snapshot list                          # list all snapshots
 aifs snapshot delete 20260601-120000F       # delete by name
 ```
 
-When you delete a `full` snapshot, pgBackRest automatically cleans up:
+When you delete a `full` snapshot, automatically cleans up:
 
 - The full backup data itself
 - All WAL segments that were only needed to recover from that backup
@@ -366,11 +366,9 @@ When you delete a `full` snapshot, pgBackRest automatically cleans up:
 
 Each `full` backup is a self-contained baseline. WAL segments before the oldest remaining `full` are no longer needed by any recovery point and are freed immediately. This means storage does **not** grow indefinitely — old backups and their WAL are fully released once deleted.
 
-You can also let pgBackRest manage retention automatically. Set `repo1-retention-full` in your pgBackRest config to keep only the N most recent full backups; older ones (and their WAL) are expired automatically after each new full backup completes.
-
 ### Managing storage growth
 
-If backup storage has grown large over time (many accumulated `diff`/`incr` snapshots and WAL), the recommended way to reclaim space is:
+If backup storage has grown large over time, the recommended way to reclaim space is:
 
 ```bash
 # 1. Take a new full backup as the new baseline
