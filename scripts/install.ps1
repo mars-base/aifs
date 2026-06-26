@@ -168,9 +168,12 @@ options = metadata
 "@
 $bootB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bootConfig))
 # Read existing /etc/wsl.conf to detect changes (avoid unnecessary shutdown on upgrade).
+# Join output lines into a single string before regex matching — PowerShell captures
+# multi-line external command output as a string array, and -notmatch on an array
+# filters rather than returning a bool, so $needWslConfShutdown would always be $true.
 $existingWslConf = ""
 try {
-    $existingWslConf = wsl -d podman-machine-default -u root --exec sh -c "cat /etc/wsl.conf 2>/dev/null" 2>$null
+    $existingWslConf = (wsl -d podman-machine-default -u root --exec sh -c "cat /etc/wsl.conf 2>/dev/null" 2>$null) -join "`n"
 } catch {}
 $needWslConfShutdown = (
     ($existingWslConf -notmatch 'command\s*=\s*podman system service') -or
