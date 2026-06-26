@@ -55,6 +55,9 @@ irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/install.ps1 | 
 # 1. Initialize config (choose a dedicated data directory)
 aifs config init --add your-project --base-dir ~/.aifs
 
+# 1.1 or create project and multi instances
+aifs create -i your-project
+
 # 2. Start PostgreSQL and backup container
 aifs start -i your-project
 
@@ -122,6 +125,9 @@ aifs stop -i project-b
 ```powershell
 # 1. Initialize config (choose a dedicated data directory)
 aifs config init --add your-project --base-dir D:\aifs
+
+# 1.1 or create project and multi instances
+aifs create -i your-project
 
 # 2. Start PostgreSQL and backup container
 aifs start -i your-project
