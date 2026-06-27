@@ -890,10 +890,53 @@
 
   function copyCode(id) {
     const text = document.getElementById(id).textContent;
-    navigator.clipboard.writeText(text).then(() => {
-      event.target.textContent = 'copied!';
-      setTimeout(() => event.target.textContent = 'copy', 1500);
+    const btn = event.currentTarget;
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => showToast(btn));
+    } else {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.cssText = 'position:fixed;opacity:0;';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      showToast(btn);
+    }
+  }
+
+  function showToast(btn) {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      toast.style.cssText = `
+        position: absolute;
+        background: rgba(0, 212, 255, 0.15); border: 1px solid rgba(0, 212, 255, 0.4);
+        color: #00d4ff; padding: 0.3rem 0.8rem; border-radius: 100px;
+        font-size: 0.78rem; letter-spacing: 1px; white-space: nowrap;
+        backdrop-filter: blur(12px); z-index: 9999;
+        opacity: 0; transition: opacity 0.2s, transform 0.2s;
+        pointer-events: none; transform: translateY(-4px);
+      `;
+      document.body.appendChild(toast);
+    }
+    toast.textContent = 'Copied!';
+    const rect = btn.getBoundingClientRect();
+    toast.style.left = (rect.left + window.scrollX + rect.width / 2 - toast.offsetWidth / 2) + 'px';
+    toast.style.top = (rect.top + window.scrollY - toast.offsetHeight - 8) + 'px';
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+    clearTimeout(toast._timer);
+    // reposition after render (offsetWidth may be 0 first time)
+    requestAnimationFrame(() => {
+      toast.style.left = (rect.left + window.scrollX + rect.width / 2 - toast.offsetWidth / 2) + 'px';
+      toast.style.top = (rect.top + window.scrollY - toast.offsetHeight - 8) + 'px';
     });
+    toast._timer = setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-4px)';
+    }, 1500);
   }
 </script>
 </body>
