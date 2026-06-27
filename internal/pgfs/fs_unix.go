@@ -69,6 +69,22 @@ func (n *FSNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut
 		return fs.ToErrno(err)
 	}
 	fillAttrOut(out, attr)
+
+	// Force permissive modes so that FUSE presents all files as readable
+	// and all directories as readable+writable to the user who mounted
+	// the filesystem. The security boundary is at the mount-point level
+	// (the OS requires the user to own / be able to access the mount
+	// directory). Without this, a filesystem formatted by uid 1000 on a
+	// remote machine is effectively read-only when mounted by uid 501
+	// locally, because the kernel enforces the stored POSIX uid/mode.
+	//
+	// This matches fs_windows.go, which applies the same relaxation for
+	// the same reason (WinFsp builds Windows ACLs from the POSIX mode).
+	if out.Mode&syscall.S_IFDIR == syscall.S_IFDIR {
+		out.Mode = syscall.S_IFDIR | 0777
+	} else {
+		out.Mode = (out.Mode & syscall.S_IFMT) | 0666
+	}
 	return fs.OK
 }
 
