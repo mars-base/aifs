@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -81,6 +82,39 @@ Examples:
 		}
 		if err != nil {
 			return fmt.Errorf("Invalid time format: %w (use: YYYY-MM-DD HH:MM:SS+00 or YYYY-MM-DD HH:MM:SS)", err)
+		}
+
+		// If no timezone was parsed, treat as UTC.
+		if targetTime.Location() == time.UTC && !strings.Contains(restoreTime, "+") && !strings.Contains(restoreTime, "Z") {
+			targetTime = time.Date(targetTime.Year(), targetTime.Month(), targetTime.Day(),
+				targetTime.Hour(), targetTime.Minute(), targetTime.Second(), 0, time.UTC)
+		}
+
+		// Validate target time against the latest backup stop time.
+		// pgBackRest requires target >= stop time; if earlier, it cannot find a
+		// usable backup set and will fail with error [075].
+		{
+			bm0, err0 := newBackupManager()
+			if err0 == nil {
+				pm0, err0 := newPodman()
+				if err0 == nil {
+					pt0 := pitr.New(cfg, pm0, bm0)
+					if snaps, err0 := pt0.ListSnapshots(1); err0 == nil && len(snaps) > 0 {
+						latest := snaps[0]
+						if !latest.StopTime.IsZero() && targetTime.Before(latest.StopTime) {
+							return fmt.Errorf(
+								"target time %s is before the latest backup stop time %s\n"+
+									"  The earliest usable restore point is: %s\n"+
+									"  Hint: use --time \"%s\" or later",
+								targetTime.UTC().Format("2006-01-02 15:04:05"),
+								latest.StopTime.UTC().Format("2006-01-02 15:04:05"),
+								latest.StopTime.UTC().Format("2006-01-02 15:04:05"),
+								latest.StopTime.UTC().Format("2006-01-02 15:04:05"),
+							)
+						}
+					}
+				}
+			}
 		}
 
 		mounted, err := pgfs.IsInstanceMounted(cmd.Context(), cfg.GetPostgresURL(), cfg.EffectiveFilesystem().TablePrefix)
