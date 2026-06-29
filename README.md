@@ -521,7 +521,7 @@ aifs bench Z: -p 4
 ### Reference results (SATA HDD, single thread)
 
 Measured on a SATA mechanical disk with the aifs data directory (`--base-dir`) on that same disk,
-with performance tuning applied (`synchronous_commit = off`, `shared_buffers = 1GB`, `wal_buffers = 64MB`):
+with performance tuning applied:
 
 ```
 BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 10, NumThreads: 1
