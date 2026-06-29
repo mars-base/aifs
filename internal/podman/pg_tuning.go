@@ -11,6 +11,9 @@ import (
 //
 // The block is idempotent: repeated aifs start calls replace the block
 // in-place rather than appending duplicate sections.
+//
+// After the conf block is written, applyBlobTableTuning() runs a separate
+// ALTER TABLE to set per-table autovacuum scale_factor on aifs_blob.
 var pgTuningParams = []string{
 	// Disable synchronous WAL commit.  Transactions return as soon as WAL is
 	// written to the kernel buffer — no fsync wait.  In the worst case (hard
@@ -39,11 +42,15 @@ var pgTuningParams = []string{
 	// slightly more frequent background I/O.
 	"checkpoint_timeout = 5min",
 
-	// Throttle autovacuum I/O so it does not compete with foreground writes on
-	// HDD.  10ms is 5x the PG 18 default (2ms) but still 2x faster than the
-	// old 20ms setting — a balance between cleanup speed and I/O contention.
-	"autovacuum_vacuum_cost_delay = 10ms",
-	"autovacuum_vacuum_cost_limit = 200",
+	// Disable autovacuum I/O throttling entirely.  The aifs_blob TOAST table
+	// accumulates large dead tuples rapidly during file writes; with any
+	// cost_delay > 0 the TOAST autovacuum runs for tens of minutes.
+	// cost_delay=0 means autovacuum runs at full I/O speed, clearing dead
+	// TOAST rows quickly so they don't bloat the table.  Per-table settings
+	// on TOAST tables are not supported by PostgreSQL, so the global value is
+	// the only knob available.
+	"autovacuum_vacuum_cost_delay = 0",
+	"autovacuum_vacuum_cost_limit = 800",
 }
 
 // pgRestartParams is the set of parameter names that require a PostgreSQL
@@ -152,5 +159,30 @@ func (m *Manager) ApplyPGTuning() (needsRestart bool, err error) {
 	}
 
 	fmt.Println("-> PostgreSQL performance tuning applied")
+
+	// Apply per-table autovacuum tuning for aifs_blob.
+	// aifs_blob.data stores large bytea chunks; every file-write UPDATE leaves
+	// dead TOAST rows.  Lower scale_factor (0.01 vs default 0.20) triggers
+	// autovacuum sooner before dead-tuple bloat accumulates.
+	if err := m.applyBlobTableTuning(); err != nil {
+		fmt.Printf("  [!] blob table tuning warning: %v\n", err)
+	}
+
 	return needsRestart, nil
+}
+
+// applyBlobTableTuning sets per-table autovacuum parameters on aifs_blob
+// so that autovacuum triggers quickly after file-write churns the TOAST table.
+func (m *Manager) applyBlobTableTuning() error {
+	sql := `ALTER TABLE IF EXISTS aifs_blob SET (
+		autovacuum_vacuum_scale_factor = 0.01,
+		autovacuum_analyze_scale_factor = 0.01
+	)`
+	db := m.cfg.Postgres.Database
+	user := m.cfg.Postgres.User
+	out, err := m.Exec("psql", "-U", user, "-d", db, "-c", sql)
+	if err != nil {
+		return fmt.Errorf("alter aifs_blob: %w\n%s", err, out)
+	}
+	return nil
 }
