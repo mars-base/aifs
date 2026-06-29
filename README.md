@@ -520,18 +520,19 @@ aifs bench Z: -p 4
 
 ### Reference results (SATA HDD, single thread)
 
-Measured on a SATA mechanical disk with the aifs data directory (`--base-dir`) on that same disk:
+Measured on a SATA mechanical disk with the aifs data directory (`--base-dir`) on that same disk,
+with performance tuning applied (`synchronous_commit = off`, `shared_buffers = 1GB`, `wal_buffers = 64MB`):
 
 ```
 BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 10, NumThreads: 1
 +------------------+-----------------+---------------+
 |       ITEM       |      VALUE      |     COST      |
 +------------------+-----------------+---------------+
-| Write big file   | 1.30 MiB/s      | 77.10 s/file  |
-| Read big file    | 43.43 MiB/s     | 2.30 s/file   |
-| Write small file | 11.8 files/s    | 84.40 ms/file |
-| Read small file  | 1685.8 files/s  | 0.59 ms/file  |
-| Stat file        | 16246.6 files/s | 0.06 ms/file  |
+| Write big file   | 3.00 MiB/s      | 33.33 s/file  |
+| Read big file    | 45.27 MiB/s     | 2.21 s/file   |
+| Write small file | 585.7 files/s   | 1.71 ms/file  |
+| Read small file  | 2125.2 files/s  | 0.47 ms/file  |
+| Stat file        | 13927.8 files/s | 0.07 ms/file  |
 +------------------+-----------------+---------------+
 ```
 
@@ -544,15 +545,15 @@ BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 
 +------------------+-----------------+--------------+
 |       ITEM       |      VALUE      |     COST     |
 +------------------+-----------------+--------------+
-| Write big file   | 9.11 MiB/s      | 10.97 s/file |
+| Write big file   | 9.30 MiB/s      | 10.76 s/file |
 | Read big file    | 45.12 MiB/s     | 2.22 s/file  |
-| Write small file | 300.6 files/s   | 3.33 ms/file |
+| Write small file | 537.8 files/s   | 1.86 ms/file |
 | Read small file  | 2023.1 files/s  | 0.49 ms/file |
-| Stat file        | 13807.5 files/s | 0.07 ms/file |
+| Stat file        | 14357.6 files/s | 0.07 ms/file |
 +------------------+-----------------+--------------+
 ```
 
-Placing `--base-dir` on NVMe delivers **~11× faster big-file writes** and **~23× faster small-file writes** compared to SATA HDD. The bottleneck is PostgreSQL WAL fsync latency, which NVMe reduces dramatically. Read speeds are similar because both measurements were taken without root (page cache not dropped).
+Placing `--base-dir` on NVMe delivers **~3× faster big-file writes** compared to a tuned SATA HDD setup. Applying the same tuning to NVMe would push write performance even higher.
 
 ### Why the write speed is lower than a regular filesystem
 

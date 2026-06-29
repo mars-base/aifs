@@ -158,6 +158,30 @@ func doStart(c *config.Config) error {
 		time.Sleep(time.Second)
 	}
 
+	// 7b. Apply performance tuning to postgresql.conf inside the running
+	// container.  Done here (after PG is ready) so podman exec works.
+	// If restart-required params changed, restart the container once more and
+	// wait for PG to come back up.
+	if needsRestart, err := pm.ApplyPGTuning(); err != nil {
+		fmt.Printf("  [!] pg_tuning warning: %v\n", err)
+	} else if needsRestart {
+		fmt.Println("-> Restarting PostgreSQL to apply shared_buffers / wal_buffers changes...")
+		if err := pm.StopContainer(); err != nil {
+			fmt.Printf("  [!] stop container for restart: %v\n", err)
+		} else if err := pm.StartContainer(); err != nil {
+			fmt.Printf("  [!] start container after restart: %v\n", err)
+		} else {
+			fmt.Println("-> Waiting for PostgreSQL to be ready (after restart)...")
+			for i := 0; i < 60; i++ {
+				if ready, _ := pm.PGIsReady(); ready {
+					fmt.Println("  [OK] PostgreSQL ready")
+					break
+				}
+				time.Sleep(time.Second)
+			}
+		}
+	}
+
 	// 8. Initialize pgBackRest stanza (via backup container)
 	if c.PITR.Enabled {
 		bm, err := podman.NewBackupManager(c)
