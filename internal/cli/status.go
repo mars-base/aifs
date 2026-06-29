@@ -87,8 +87,13 @@ var statusCmd = &cobra.Command{
 				if r.err == nil && len(r.snapshots) > 0 {
 					fmt.Println("\nRecent backups(UTC):")
 					for _, s := range r.snapshots {
-						fmt.Printf("  %s  %s  %s\n",
-							s.Timestamp.Format("2006-01-02 15:04"),
+						stopStr := ""
+						if !s.StopTime.IsZero() {
+							stopStr = " → " + s.StopTime.Format("2006-01-02 15:04:05")
+						}
+						fmt.Printf("  %s%s  %s  %s\n",
+							s.Timestamp.Format("2006-01-02 15:04:05"),
+							stopStr,
 							s.Name, s.Type)
 					}
 				} else {

@@ -16,7 +16,8 @@ import (
 // Snapshot represents a pgBackRest backup snapshot.
 type Snapshot struct {
 	Name      string    `json:"name"`      // Backup label
-	Timestamp time.Time `json:"timestamp"` // Backup time
+	Timestamp time.Time `json:"timestamp"` // Backup start time
+	StopTime  time.Time `json:"stop_time"` // Backup stop time (earliest usable restore point)
 	Type      string    `json:"type"`      // full / incr / diff
 	Size      int64     `json:"size"`      // Backup size (bytes)
 }
@@ -362,8 +363,14 @@ func parseInfoOutput(out string) []Snapshot {
 				start := strings.TrimSpace(parts[0])
 				if t, err := time.Parse("2006-01-02 15:04:05Z07", start); err == nil {
 					current.Timestamp = t
-					// Update value in slice
 					snapshots[len(snapshots)-1].Timestamp = t
+				}
+			}
+			if len(parts) > 1 {
+				stop := strings.TrimSpace(parts[1])
+				if t, err := time.Parse("2006-01-02 15:04:05Z07", stop); err == nil {
+					current.StopTime = t
+					snapshots[len(snapshots)-1].StopTime = t
 				}
 			}
 		}

@@ -115,11 +115,16 @@ var snapshotListCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("%-25s  %-30s  %-10s\n", "Time", "Name", "Type")
-		fmt.Println("-------------------------------------------------------------------")
+		fmt.Printf("%-25s  %-25s  %-30s  %-10s\n", "Start Time", "Stop Time", "Name", "Type")
+		fmt.Println("-----------------------------------------------------------------------------------------")
 		for _, s := range snapshots {
-			fmt.Printf("%-25s  %-30s  %-10s\n",
+			stopStr := ""
+			if !s.StopTime.IsZero() {
+				stopStr = s.StopTime.Format("2006-01-02 15:04:05")
+			}
+			fmt.Printf("%-25s  %-25s  %-30s  %-10s\n",
 				s.Timestamp.Format("2006-01-02 15:04:05"),
+				stopStr,
 				s.Name, s.Type)
 		}
 		return nil
