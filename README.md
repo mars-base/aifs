@@ -525,35 +525,35 @@ with performance tuning applied:
 
 ```
 BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 10, NumThreads: 1
-+------------------+-----------------+---------------+
-|       ITEM       |      VALUE      |     COST      |
-+------------------+-----------------+---------------+
-| Write big file   | 3.00 MiB/s      | 33.33 s/file  |
-| Read big file    | 45.27 MiB/s     | 2.21 s/file   |
-| Write small file | 585.7 files/s   | 1.71 ms/file  |
-| Read small file  | 2125.2 files/s  | 0.47 ms/file  |
-| Stat file        | 13927.8 files/s | 0.07 ms/file  |
-+------------------+-----------------+---------------+
++------------------+-----------------+--------------+
+|       ITEM       |      VALUE      |     COST     |
++------------------+-----------------+--------------+
+| Write big file   | 4.94 MiB/s      | 20.25 s/file |
+| Read big file    | 44.60 MiB/s     | 2.24 s/file  |
+| Write small file | 605.7 files/s   | 1.65 ms/file |
+| Read small file  | 1930.4 files/s  | 0.52 ms/file |
+| Stat file        | 14807.0 files/s | 0.07 ms/file |
++------------------+-----------------+--------------+
 ```
 
 ### Reference results (NVMe SSD, single thread)
 
-Same machine, aifs data directory on a local NVMe SSD (LUKS-encrypted):
+Same machine, aifs data directory on a local NVMe SSD:
 
 ```
 BlockSize: 1 MiB, BigFileSize: 100 MiB, SmallFileSize: 128 KiB, SmallFileCount: 10, NumThreads: 1
 +------------------+-----------------+--------------+
 |       ITEM       |      VALUE      |     COST     |
 +------------------+-----------------+--------------+
-| Write big file   | 9.30 MiB/s      | 10.76 s/file |
-| Read big file    | 45.12 MiB/s     | 2.22 s/file  |
-| Write small file | 537.8 files/s   | 1.86 ms/file |
-| Read small file  | 2023.1 files/s  | 0.49 ms/file |
-| Stat file        | 14357.6 files/s | 0.07 ms/file |
+| Write big file   | 10.09 MiB/s     | 9.92 s/file  |
+| Read big file    | 43.34 MiB/s     | 2.31 s/file  |
+| Write small file | 418.4 files/s   | 2.39 ms/file |
+| Read small file  | 1673.9 files/s  | 0.60 ms/file |
+| Stat file        | 11283.1 files/s | 0.09 ms/file |
 +------------------+-----------------+--------------+
 ```
 
-Placing `--base-dir` on NVMe delivers **~3× faster big-file writes** compared to a tuned SATA HDD setup. Applying the same tuning to NVMe would push write performance even higher.
+Placing `--base-dir` on NVMe delivers **~2× faster big-file writes** compared to a tuned SATA HDD setup.
 
 ### Why the write speed is lower than a regular filesystem
 
