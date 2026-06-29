@@ -77,7 +77,7 @@ func runBench(cmd *cobra.Command, args []string) error {
 		_ = os.RemoveAll(tmpdir)
 	}()
 
-	// Pre-generate random buffer (reused across writes to avoid CPU bottleneck).
+	// Pre-generate random buffer for small file writes (blockSize chunk).
 	buf := make([]byte, blockSize)
 	rand.Read(buf) //nolint:gosec
 
@@ -113,6 +113,15 @@ func runBench(cmd *cobra.Command, args []string) error {
 		blocks := (bigSize + blockSize - 1) / blockSize
 		actualBigSize := blocks * blockSize
 
+		// Pre-generate full big-file content so each fp.Write() is a single
+		// call covering the entire file.  Writing in one shot avoids
+		// PostgreSQL Read-Modify-Write amplification: partial writes to an
+		// existing TOAST chunk force a read + modify + re-insert of the whole
+		// 4 MiB chunk on every call.  One-shot write produces only INSERT
+		// operations (no UPDATE), which is dramatically faster.
+		bigBuf := make([]byte, actualBigSize)
+		rand.Read(bigBuf) //nolint:gosec
+
 		fmt.Printf("Writing %d big file(s) × %d thread(s) ...\n",
 			1, threads)
 		dur := runParallel(func(idx int) {
@@ -122,11 +131,8 @@ func runBench(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "bench: open %s: %v\n", fname, err)
 				return
 			}
-			for b := int64(0); b < blocks; b++ {
-				if _, err := fp.Write(buf); err != nil {
-					fmt.Fprintf(os.Stderr, "bench: write %s: %v\n", fname, err)
-					break
-				}
+			if _, err := fp.Write(bigBuf); err != nil {
+				fmt.Fprintf(os.Stderr, "bench: write %s: %v\n", fname, err)
 			}
 			_ = fp.Close()
 		})
@@ -165,13 +171,16 @@ func runBench(cmd *cobra.Command, args []string) error {
 
 	// ── small files ───────────────────────────────────────────────────────────
 	if smallCount > 0 {
-		// small files: bsize = min(smallSize, blockSize)
-		sbuf := buf
-		if smallSize < blockSize {
-			sbuf = buf[:smallSize]
+		// Pre-generate full small-file content for one-shot write.
+		// Small files fit entirely within a single TOAST chunk (4 MiB default),
+		// so one-shot write still produces only INSERT, not UPDATE.
+		var smallBuf []byte
+		if smallSize <= blockSize {
+			smallBuf = buf[:smallSize]
+		} else {
+			smallBuf = make([]byte, smallSize)
+			rand.Read(smallBuf) //nolint:gosec
 		}
-		sbsize := int64(len(sbuf))
-		sblocks := (smallSize + sbsize - 1) / sbsize
 
 		fmt.Printf("Writing %d small file(s) × %d thread(s) ...\n",
 			smallCount, threads)
@@ -183,10 +192,8 @@ func runBench(cmd *cobra.Command, args []string) error {
 					fmt.Fprintf(os.Stderr, "bench: open %s: %v\n", fname, err)
 					continue
 				}
-				for b := int64(0); b < sblocks; b++ {
-					if _, err := fp.Write(sbuf); err != nil {
-						break
-					}
+				if _, err := fp.Write(smallBuf); err != nil {
+					fmt.Fprintf(os.Stderr, "bench: write %s: %v\n", fname, err)
 				}
 				_ = fp.Close()
 			}
@@ -201,7 +208,7 @@ func runBench(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("Reading %d small file(s) × %d thread(s) ...\n",
 			smallCount, threads)
-		rsbuf := make([]byte, sbsize)
+		rsbuf := make([]byte, smallSize)
 		dur = runParallel(func(idx int) {
 			for i := 0; i < smallCount; i++ {
 				fname := filepath.Join(tmpdir, fmt.Sprintf("small.%d.%d", idx, i))
@@ -210,10 +217,8 @@ func runBench(cmd *cobra.Command, args []string) error {
 					fmt.Fprintf(os.Stderr, "bench: open %s: %v\n", fname, err)
 					continue
 				}
-				for b := int64(0); b < sblocks; b++ {
-					if _, err := fp.Read(rsbuf); err != nil {
-						break
-					}
+				if _, err := fp.Read(rsbuf); err != nil {
+					fmt.Fprintf(os.Stderr, "bench: read %s: %v\n", fname, err)
 				}
 				_ = fp.Close()
 			}
