@@ -2,6 +2,7 @@ package podman
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -62,15 +63,18 @@ const (
 // the running PostgreSQL container, then reloads (or restarts) as needed.
 //
 // It is called by doStart after the container is running and PostgreSQL is
-// ready, so it can use podman exec to access the file with the correct
-// in-container user permissions.
+// ready, so it can use podman exec / podman cp to access the file with the
+// correct in-container user permissions.
+//
+// The write is done via podman cp (host temp file → container path) rather
+// than a shell heredoc, so it is not subject to OS command-line length limits
+// (important on Windows where the limit is ~32 767 characters).
 //
 // Behaviour:
-//   - If the block is absent or differs, it is written and pg_reload_conf() is
-//     called for reload-only parameters.
+//   - If the block is absent or differs, it is written.
 //   - If any restart-required parameter (shared_buffers, wal_buffers) changed,
-//     the container is restarted once and the caller waits for PG to be ready
-//     again.  The return value needsRestart signals this to the caller.
+//     the return value needsRestart is true; the caller is responsible for
+//     restarting the container.
 func (m *Manager) ApplyPGTuning() (needsRestart bool, err error) {
 	// Read current postgresql.conf from inside the container.
 	current, err := m.Exec("cat", pgConfPath)
@@ -84,14 +88,13 @@ func (m *Manager) ApplyPGTuning() (needsRestart bool, err error) {
 	lines = append(lines, pgTuningEnd)
 	newBlock := "\n" + strings.Join(lines, "\n") + "\n"
 
-	// Check whether the block already exists and is identical.
+	// Check whether the block already exists and is identical — skip if so.
 	if strings.Contains(current, pgTuningBegin) {
 		start := strings.Index(current, pgTuningBegin)
 		end := strings.Index(current[start:], pgTuningEnd)
 		if end >= 0 {
 			existing := current[start : start+end+len(pgTuningEnd)]
 			if existing == strings.TrimPrefix(strings.TrimSuffix(newBlock, "\n"), "\n") {
-				// Block is already up-to-date — nothing to do.
 				return false, nil
 			}
 		}
@@ -103,8 +106,6 @@ func (m *Manager) ApplyPGTuning() (needsRestart bool, err error) {
 		if !pgRestartParams[key] {
 			continue
 		}
-		// If the current conf doesn't already have this key set to this value,
-		// we will need a restart.
 		if !strings.Contains(current, param) {
 			needsRestart = true
 			break
@@ -128,11 +129,26 @@ func (m *Manager) ApplyPGTuning() (needsRestart bool, err error) {
 		content += newBlock
 	}
 
-	// Write back via tee (heredoc inside sh -c to handle newlines safely).
-	escaped := strings.ReplaceAll(content, "'", "'\\''")
-	_, err = m.Exec("sh", "-c", fmt.Sprintf("printf '%%s' '%s' > %s", escaped, pgConfPath))
+	// Write via podman cp: write content to a host temp file, copy it into
+	// the container, then remove the temp file.  This avoids shell command-line
+	// length limits (critical on Windows) that would occur with a heredoc/printf
+	// approach.
+	tmp, err := os.CreateTemp("", "aifs-pg-conf-*.conf")
 	if err != nil {
-		return false, fmt.Errorf("pg_tuning: write postgresql.conf: %w", err)
+		return false, fmt.Errorf("pg_tuning: create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return false, fmt.Errorf("pg_tuning: write temp file: %w", err)
+	}
+	tmp.Close()
+
+	// podman cp <host-path> <container>:<container-path>
+	if _, err := m.run("cp", tmpPath, m.cfg.Podman.ContainerName+":"+pgConfPath); err != nil {
+		return false, fmt.Errorf("pg_tuning: podman cp postgresql.conf: %w", err)
 	}
 
 	fmt.Println("-> PostgreSQL performance tuning applied")
