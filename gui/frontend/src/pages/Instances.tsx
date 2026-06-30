@@ -32,11 +32,12 @@ function InstanceCard({ inst, onAction }: { inst: InstanceInfo; onAction: () => 
     }
   }, [inst.mountPath, userEdited])
 
-  const wrap = async (fn: () => Promise<void>) => {
+  const wrap = async (fn: () => Promise<void>, resetEdit = false) => {
     setBusy(true)
     setErr('')
     try {
       await fn()
+      if (resetEdit) setUserEdited(false)
       onAction()
     } catch (e: unknown) {
       setErr(String(e))
@@ -88,14 +89,14 @@ function InstanceCard({ inst, onAction }: { inst: InstanceInfo; onAction: () => 
         />
         <button
           disabled={busy || !inst.running || !mountPoint || !!inst.mountPath}
-          onClick={() => wrap(() => MountInstance(inst.name, mountPoint))}
+          onClick={() => wrap(() => MountInstance(inst.name, mountPoint), true)}
           className="px-3 py-1.5 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Mount
         </button>
         <button
           disabled={busy || !inst.mountPath}
-          onClick={() => wrap(() => UmountInstance(inst.mountPath))}
+          onClick={() => wrap(() => UmountInstance(inst.mountPath), true)}
           className="px-3 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Umount
