@@ -19,15 +19,19 @@ build: build-cli build-gui
 
 # Build CLI only
 build-cli:
-	$(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/aifs
+	@echo "  • Building CLI ($(VERSION))..."
+	@$(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/aifs
+	@echo "  • CLI built: $(BUILD_DIR)/$(BINARY_NAME)"
 
 # Build GUI only (requires wails: go install github.com/wailsapp/wails/v2/cmd/wails@latest)
 # wails always outputs to gui/build/bin/; copy to build/ next to the CLI so
 # resolveAifsBin() can find the aifs sibling at runtime.
 build-gui:
-	cd gui && wails build
-	mkdir -p $(BUILD_DIR)
-	cp gui/build/bin/aifs-gui $(BUILD_DIR)/$(BINARY_NAME)-gui
+	@echo "  • Building GUI..."
+	@cd gui && wails build
+	@mkdir -p $(BUILD_DIR)
+	@cp gui/build/bin/aifs-gui $(BUILD_DIR)/$(BINARY_NAME)-gui
+	@echo "  • GUI built: $(BUILD_DIR)/$(BINARY_NAME)-gui"
 
 # Install to $GOPATH/bin
 install:

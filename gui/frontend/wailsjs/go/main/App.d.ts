@@ -3,11 +3,19 @@
 import {main} from '../models';
 import {pitr} from '../models';
 
+export function CreateInstance(arg1:main.CreateInstanceRequest):Promise<void>;
+
 export function CreateSnapshot(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteSnapshot(arg1:string,arg2:string):Promise<void>;
 
+export function FormatInstance(arg1:string):Promise<void>;
+
 export function GetConfigPath():Promise<string>;
+
+export function GetConfigStatus():Promise<main.ConfigStatus>;
+
+export function InitConfig(arg1:string):Promise<void>;
 
 export function ListInstances():Promise<Array<main.InstanceInfo>>;
 

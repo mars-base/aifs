@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
+	"path/filepath"
+	goruntime "runtime"
 	"sort"
+	"strings"
 	"time"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/mars-base/aifs/internal/bench"
 	"github.com/mars-base/aifs/internal/config"
@@ -36,11 +41,12 @@ func (a *App) startup(ctx context.Context) {
 
 // InstanceInfo is the data returned to the frontend for each instance.
 type InstanceInfo struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	Running   bool   `json:"running"`
-	Port      int    `json:"port"`
-	MountPath string `json:"mountPath"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Running     bool   `json:"running"`
+	PgURL       string `json:"pgUrl"`
+	MountPath   string `json:"mountPath"`
+	IsFormatted bool   `json:"isFormatted"`
 }
 
 // loadCfg loads the aifs config and sets the given instance.
@@ -107,7 +113,20 @@ func (a *App) ListInstances() ([]InstanceInfo, error) {
 			info.Status = cs.Status
 			info.Running = cs.Running
 		}
-		info.Port = cfg.Postgres.Port
+		info.PgURL = cfg.GetPostgresURL()
+
+		// Check if the filesystem has been formatted (only meaningful when running).
+		if info.Running {
+			ctx := context.Background()
+			db, m, _, err := pgfs.Open(ctx, cfg.GetPostgresURL(), cfg.Filesystem.TablePrefix)
+			if err == nil {
+				if _, err := m.Load(ctx); err == nil {
+					info.IsFormatted = true
+				}
+				db.Close()
+			}
+		}
+
 		result = append(result, info)
 	}
 	return result, nil
@@ -159,10 +178,47 @@ func (a *App) StartInstance(name string) error {
 	// Initialize PITR stanza if enabled.
 	if cfg.PITR.Enabled {
 		bm, err := podman.NewBackupManager(cfg)
-		if err == nil {
-			pt := pitr.New(cfg, pm, bm)
-			if err := pt.EnsureStanza(); err != nil {
-				fmt.Printf("  [!] stanza warning: %v\n", err)
+		if err != nil {
+			return fmt.Errorf("creating backup manager: %w", err)
+		}
+
+		if _, err := bm.EnsureSSHKey(); err != nil {
+			fmt.Printf("  [!] backup ssh key warning: %v\n", err)
+		}
+
+		if err := bm.AuthorizeKeyOnInstance(); err != nil {
+			fmt.Printf("  [!] backup key authorization warning: %v\n", err)
+		}
+
+		if err := bm.EnsureBackupInfra(); err != nil {
+			return fmt.Errorf("backup infrastructure: %w", err)
+		}
+
+		pt := pitr.New(cfg, pm, bm)
+		if err := pt.EnsureStanza(); err != nil {
+			fmt.Printf("  [!] stanza create warning: %v\n", err)
+		}
+
+		stanza := cfg.PITR.PgBackRestStanza
+		archiveCmd := fmt.Sprintf("pgbackrest --stanza=%s archive-push %%p", stanza)
+		setSQL := fmt.Sprintf("ALTER SYSTEM SET archive_command TO '%s'", archiveCmd)
+		if _, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", setSQL); err != nil {
+			fmt.Printf("  [!] setting archive_command: %v\n", err)
+		}
+		pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_reload_conf()")
+		pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-c", "SELECT pg_switch_wal()")
+
+		if err := pt.CheckStanza(); err != nil {
+			fmt.Printf("  [!] stanza check warning: %v\n", err)
+		}
+
+		// Wait for WAL archiver to catch up.
+		for i := 0; i < 30; i++ {
+			time.Sleep(2 * time.Second)
+			out, err := pm.Exec("psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database,
+				"-tAc", "SELECT last_archived_wal FROM pg_stat_archiver WHERE last_archived_wal IS NOT NULL")
+			if err == nil && strings.TrimSpace(out) != "" {
+				break
 			}
 		}
 	}
@@ -184,26 +240,34 @@ func (a *App) StopInstance(name string) error {
 }
 
 // MountInstance mounts the filesystem for the given instance at mountpoint.
+// It starts a detached aifs child process (not an in-process goroutine) so
+// the mount survives GUI restarts.
 func (a *App) MountInstance(name, mountpoint string) error {
 	cfg, err := loadCfg(name)
 	if err != nil {
 		return err
 	}
-	fsCfg := cfg.EffectiveFilesystem()
-	rec := pgfs.MountRecord{
-		MountPoint: mountpoint,
-		Instance:   cfg.Instance,
-		PID:        os.Getpid(),
+
+	// Expand leading ~ to the user's home directory.
+	mountpoint = expandHome(mountpoint)
+
+	// Ensure the mount point directory exists.
+	if err := os.MkdirAll(mountpoint, 0755); err != nil {
+		return fmt.Errorf("creating mount point: %w", err)
 	}
-	onMounted := func() {
-		if err := pgfs.AddMountState(rec); err != nil {
-			// Non-fatal: status display may miss this mount, but the FS works fine.
-			_ = err
-		}
+
+	// Resolve the aifs binary: prefer a sibling "aifs" next to this GUI binary,
+	// fall back to whatever is on $PATH.
+	aifsBin, err := resolveAifsBin()
+	if err != nil {
+		return fmt.Errorf("resolving aifs binary: %w", err)
 	}
-	mountErr := pgfs.Mount(a.ctx, cfg.GetPostgresURL(), fsCfg.TablePrefix, cfg.Podman.DataDir, mountpoint, onMounted)
-	_ = pgfs.RemoveMountState(mountpoint)
-	return mountErr
+
+	// Build args: aifs -c <cfg> -i <instance> mount <mountpoint>
+	cfgPath := platform.DefaultConfigPath()
+	args := []string{"-c", cfgPath, "-i", cfg.Instance, "mount", mountpoint}
+
+	return pgfs.MountBackground(aifsBin, args, mountpoint)
 }
 
 // UmountInstance unmounts the filesystem at the given mountpoint.
@@ -234,7 +298,9 @@ func (a *App) ListSnapshots(name string) ([]pitr.Snapshot, error) {
 	return pt.ListSnapshots(0)
 }
 
-// CreateSnapshot creates a backup snapshot of the given type (full/diff/incr).
+// CreateSnapshot creates a backup snapshot of the given type (full/diff).
+// Progress is streamed to the frontend via the "snapshot-log" Wails event.
+// Each event payload is a single log line string.
 func (a *App) CreateSnapshot(name, snapType string) error {
 	cfg, err := loadCfg(name)
 	if err != nil {
@@ -255,7 +321,11 @@ func (a *App) CreateSnapshot(name, snapType string) error {
 		return fmt.Errorf("authorizing backup key: %w", err)
 	}
 	pt := pitr.New(cfg, pm, bm)
-	_, err = pt.CreateSnapshot(snapType, false)
+
+	// eventWriter forwards each Write call as a "snapshot-log" Wails event so
+	// the frontend can display real-time progress.
+	w := &eventWriter{ctx: a.ctx, event: "snapshot-log"}
+	_, err = pt.CreateSnapshotToWriter(w, snapType)
 	return err
 }
 
@@ -309,10 +379,132 @@ func (a *App) RestoreInstance(name, targetTime string, promote bool) error {
 		return err
 	}
 	pt := pitr.New(cfg, pm, bm)
-	return pt.Restore(t, promote, false, false)
+	w := &eventWriter{ctx: a.ctx, event: "restore-log"}
+	return pt.RestoreToWriter(w, t, promote)
 }
 
-// --- Bench ---------------------------------------------------------------
+// FormatInstance initialises the PG-backed filesystem for the given instance.
+// This must be called once after the instance is started for the first time,
+// before any mount can succeed.
+func (a *App) FormatInstance(name string) error {
+	cfg, err := loadCfg(name)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	_, err = pgfs.Format(ctx, cfg.GetPostgresURL(), cfg.Filesystem.VolumeName, cfg.Filesystem.TablePrefix, false)
+	return err
+}
+
+// --- Config setup --------------------------------------------------------
+
+// ConfigStatus describes the current state of the config file.
+type ConfigStatus struct {
+	Exists  bool   `json:"exists"`
+	Path    string `json:"path"`
+	BaseDir string `json:"baseDir"`
+}
+
+// GetConfigStatus returns whether the config file exists and its key fields.
+func (a *App) GetConfigStatus() ConfigStatus {
+	path := platform.DefaultConfigPath()
+	st := ConfigStatus{Path: path}
+	cfg, err := config.Load(path)
+	if err == nil {
+		st.Exists = true
+		st.BaseDir = cfg.BaseDir
+	}
+	return st
+}
+
+// InitConfig creates a default config file. baseDir is optional.
+// Returns an error if the config already exists.
+func (a *App) InitConfig(baseDir string) error {
+	path := platform.DefaultConfigPath()
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("config file already exists: %s", path)
+	}
+
+	cfg := config.Default()
+	if baseDir != "" {
+		baseDir = expandHome(baseDir)
+		if info, err := os.Stat(baseDir); err == nil && !info.IsDir() {
+			return fmt.Errorf("base-dir %s exists but is not a directory", baseDir)
+		}
+		cfg.BaseDir = baseDir
+		cfg.Backup.DataDir = filepath.Join(baseDir, "backup", "data")
+		cfg.Backup.LogDir = filepath.Join(baseDir, "backup", "log")
+	}
+
+	cfg.ApplyDefaults()
+	return cfg.Save(path)
+}
+
+// --- Instance creation ---------------------------------------------------
+
+// CreateInstanceRequest holds the parameters for creating a new instance.
+// Only Name is required; DataDir and PITREnabled are optional.
+// Password is auto-generated.
+type CreateInstanceRequest struct {
+	Name        string `json:"name"`
+	DataDir     string `json:"data_dir"`    // PG data dir, uses default if empty
+	PITREnabled bool   `json:"pitr_enabled"`
+}
+
+// CreateInstance adds a new instance to the config file and saves it.
+// Port numbers are auto-assigned. The instance is not started automatically.
+func (a *App) CreateInstance(req CreateInstanceRequest) error {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return fmt.Errorf("instance name must not be empty")
+	}
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return fmt.Errorf("instance name %q contains invalid character %q (use letters, digits, - or _)", name, string(c))
+		}
+	}
+
+	cfgPath := platform.DefaultConfigPath()
+	cfg, err := loadCfg("")
+	if err != nil {
+		return err
+	}
+	if _, exists := cfg.Instances[name]; exists {
+		return fmt.Errorf("instance %q already exists", name)
+	}
+
+	inst := cfg.InstanceDefaults(name)
+	inst.Postgres.Password = generatePassword(16)
+
+	if req.DataDir != "" {
+		inst.Podman.DataDir = expandHome(req.DataDir)
+	}
+	inst.PITR.Enabled = req.PITREnabled
+
+	cfg.Instances[name] = *inst
+	cfg.ApplyDefaults()
+
+	return cfg.Save(cfgPath)
+}
+
+// generatePassword returns a random alphanumeric string of length n.
+func generatePassword(n int) string {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		// fallback: use timestamp-seeded values
+		for i := range buf {
+			buf[i] = chars[i%len(chars)]
+		}
+	} else {
+		for i, b := range buf {
+			buf[i] = chars[int(b)%len(chars)]
+		}
+	}
+	return string(buf)
+}
+
+
 
 // BenchResult holds the results returned to the frontend.
 type BenchResult struct {
@@ -390,6 +582,50 @@ func parseSizeStr(s string) (int64, error) {
 
 // --- Utilities -----------------------------------------------------------
 
+// eventWriter is an io.Writer that emits each chunk as a Wails runtime event.
+// The frontend can subscribe to these events for real-time log display.
+type eventWriter struct {
+	ctx   context.Context
+	event string
+}
+
+func (w *eventWriter) Write(p []byte) (int, error) {
+	wailsruntime.EventsEmit(w.ctx, w.event, string(p))
+	return len(p), nil
+}
+
+// resolveAifsBin finds the aifs CLI binary.
+// It first looks for an "aifs" (or "aifs.exe" on Windows) sibling next to
+// the running GUI binary, then falls back to $PATH lookup.
+func resolveAifsBin() (string, error) {
+	self, err := os.Executable()
+	if err == nil {
+		name := "aifs"
+		if goruntime.GOOS == "windows" {
+			name = "aifs.exe"
+		}
+		candidate := filepath.Join(filepath.Dir(self), name)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	p, err := exec.LookPath("aifs")
+	if err != nil {
+		return "", fmt.Errorf("aifs binary not found in PATH or next to GUI binary")
+	}
+	return p, nil
+}
+
+func expandHome(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = home + path[1:]
+		}
+	}
+	return path
+}
+
 // GetConfigPath returns the path to the aifs config file.
 func (a *App) GetConfigPath() string {
 	return platform.DefaultConfigPath()
@@ -399,7 +635,7 @@ func (a *App) GetConfigPath() string {
 func (a *App) OpenConfigFile() {
 	path := platform.DefaultConfigPath()
 	var cmd *exec.Cmd
-	switch runtime.GOOS {
+	switch goruntime.GOOS {
 	case "windows":
 		cmd = exec.Command("notepad", path)
 	case "darwin":

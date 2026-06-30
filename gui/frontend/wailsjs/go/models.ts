@@ -30,12 +30,45 @@ export namespace main {
 	        this.statMsPerFile = source["statMsPerFile"];
 	    }
 	}
+	export class ConfigStatus {
+	    exists: boolean;
+	    path: string;
+	    baseDir: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConfigStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.exists = source["exists"];
+	        this.path = source["path"];
+	        this.baseDir = source["baseDir"];
+	    }
+	}
+	export class CreateInstanceRequest {
+	    name: string;
+	    data_dir: string;
+	    pitr_enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateInstanceRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.data_dir = source["data_dir"];
+	        this.pitr_enabled = source["pitr_enabled"];
+	    }
+	}
 	export class InstanceInfo {
 	    name: string;
 	    status: string;
 	    running: boolean;
-	    port: number;
+	    pgUrl: string;
 	    mountPath: string;
+	    isFormatted: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new InstanceInfo(source);
@@ -46,8 +79,9 @@ export namespace main {
 	        this.name = source["name"];
 	        this.status = source["status"];
 	        this.running = source["running"];
-	        this.port = source["port"];
+	        this.pgUrl = source["pgUrl"];
 	        this.mountPath = source["mountPath"];
+	        this.isFormatted = source["isFormatted"];
 	    }
 	}
 

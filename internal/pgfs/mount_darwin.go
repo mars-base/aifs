@@ -42,6 +42,11 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string,
 		return fmt.Errorf("instance is already mounted by another aifs mount")
 	}
 
+	// Verify the filesystem has been formatted before mounting.
+	if _, err := m.Load(ctx); err != nil {
+		return fmt.Errorf("filesystem not formatted: run 'aifs -i <name> format' first")
+	}
+
 	root, err := NewRootNode(m, dataPath)
 	if err != nil {
 		return fmt.Errorf("creating root node: %w", err)

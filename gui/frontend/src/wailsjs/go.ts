@@ -10,8 +10,9 @@ export interface InstanceInfo {
   name: string
   status: string
   running: boolean
-  port: number
+  pgUrl: string
   mountPath: string
+  isFormatted: boolean
 }
 
 export interface BenchResult {
@@ -35,6 +36,24 @@ export interface Snapshot {
   size: number       // bytes
 }
 
+export interface CreateInstanceRequest {
+  name: string
+  data_dir: string
+  pitr_enabled: boolean
+}
+
+export const CreateInstance = (req: CreateInstanceRequest): Promise<void> => call('CreateInstance', req)
+
+export interface ConfigStatus {
+  exists: boolean
+  path: string
+  baseDir: string
+}
+
+export const GetConfigStatus = (): Promise<ConfigStatus> => call('GetConfigStatus')
+export const InitConfig = (baseDir: string): Promise<void> => call('InitConfig', baseDir)
+
+export const FormatInstance = (name: string): Promise<void> => call('FormatInstance', name)
 export const ListInstances = (): Promise<InstanceInfo[]> => call('ListInstances')
 export const StartInstance = (name: string): Promise<void> => call('StartInstance', name)
 export const StopInstance = (name: string): Promise<void> => call('StopInstance', name)

@@ -114,6 +114,11 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string,
 		return fmt.Errorf("instance is already mounted by another aifs mount")
 	}
 
+	// Verify the filesystem has been formatted before mounting.
+	if _, err := m.Load(ctx); err != nil {
+		return fmt.Errorf("filesystem not formatted: run 'aifs -i <name> format' first")
+	}
+
 	// WinFsp directory mounts need the parent to exist, but the mount
 	// point itself must NOT exist — WinFsp creates it. Drive letters
 	// (e.g. "Z:") go through the Mount Manager and need no directory.
