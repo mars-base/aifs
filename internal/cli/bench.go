@@ -2,14 +2,11 @@ package cli
 
 import (
 	"fmt"
-	"math/rand"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mars-base/aifs/internal/bench"
 )
 
 func init() {
@@ -63,187 +60,24 @@ func runBench(cmd *cobra.Command, args []string) error {
 	if threads == 0 {
 		return fmt.Errorf("--threads must be >= 1")
 	}
-	smallCount := int(benchSmallCount)
 
-	root, err := filepath.Abs(args[0])
+	cfg := bench.Config{
+		BlockSize:  blockSize,
+		BigSize:    bigSize,
+		SmallSize:  smallSize,
+		SmallCount: int(benchSmallCount),
+		Threads:    threads,
+	}
+
+	if cfg.BigSize > 0 {
+		fmt.Printf("Writing 1 big file(s) × %d thread(s) ...\n", threads)
+	}
+	// Progress messages are printed inside bench.Run via fmt.Fprintf(os.Stderr)
+	// for non-progress output; here we print phase headers before calling Run.
+	// Re-print headers inline to match the previous UX.
+	res, err := bench.Run(args[0], cfg)
 	if err != nil {
-		return fmt.Errorf("resolving path: %w", err)
-	}
-	tmpdir := filepath.Join(root, fmt.Sprintf("__aifs_bench_%d__", os.Getpid()))
-	if err := os.MkdirAll(tmpdir, 0o777); err != nil {
-		return fmt.Errorf("creating bench dir: %w", err)
-	}
-	defer func() {
-		_ = os.RemoveAll(tmpdir)
-	}()
-
-	// Pre-generate random buffer for small file writes (blockSize chunk).
-	buf := make([]byte, blockSize)
-	rand.Read(buf) //nolint:gosec
-
-	type row struct {
-		item, value, cost string
-	}
-	var results []row
-
-	// ── helpers ──────────────────────────────────────────────────────────────
-
-	// runParallel runs fn(threadIndex) in `threads` goroutines and returns
-	// the wall-clock duration. Always returns at least 1µs to avoid division
-	// by zero when operations complete faster than timer resolution.
-	runParallel := func(fn func(int)) time.Duration {
-		var wg sync.WaitGroup
-		start := time.Now()
-		for i := 0; i < threads; i++ {
-			i := i
-			wg.Add(1)
-			go func() { defer wg.Done(); fn(i) }()
-		}
-		wg.Wait()
-		d := time.Since(start)
-		if d < time.Microsecond {
-			d = time.Microsecond
-		}
-		return d
-	}
-
-	// ── big file ─────────────────────────────────────────────────────────────
-	if bigSize > 0 {
-		// Adjust bigSize to be a multiple of blockSize.
-		blocks := (bigSize + blockSize - 1) / blockSize
-		actualBigSize := blocks * blockSize
-
-		// Pre-generate full big-file content so each fp.Write() is a single
-		// call covering the entire file.  Writing in one shot avoids
-		// PostgreSQL Read-Modify-Write amplification: partial writes to an
-		// existing TOAST chunk force a read + modify + re-insert of the whole
-		// 4 MiB chunk on every call.  One-shot write produces only INSERT
-		// operations (no UPDATE), which is dramatically faster.
-		bigBuf := make([]byte, actualBigSize)
-		rand.Read(bigBuf) //nolint:gosec
-
-		fmt.Printf("Writing %d big file(s) × %d thread(s) ...\n",
-			1, threads)
-		dur := runParallel(func(idx int) {
-			fname := filepath.Join(tmpdir, fmt.Sprintf("big.%d", idx))
-			fp, err := os.OpenFile(fname, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "bench: open %s: %v\n", fname, err)
-				return
-			}
-			if _, err := fp.Write(bigBuf); err != nil {
-				fmt.Fprintf(os.Stderr, "bench: write %s: %v\n", fname, err)
-			}
-			_ = fp.Close()
-		})
-		totalMiB := float64(actualBigSize) * float64(threads) / (1024 * 1024)
-		secs := dur.Seconds()
-		results = append(results, row{
-			item:  "Write big file",
-			value: fmt.Sprintf("%.2f MiB/s", totalMiB/secs),
-			cost:  fmt.Sprintf("%.2f s/file", secs/float64(threads)),
-		})
-
-		fmt.Printf("Reading %d big file(s) × %d thread(s) ...\n", 1, threads)
-		readBuf := make([]byte, blockSize)
-		dur = runParallel(func(idx int) {
-			fname := filepath.Join(tmpdir, fmt.Sprintf("big.%d", idx))
-			fp, err := os.Open(fname)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "bench: open %s: %v\n", fname, err)
-				return
-			}
-			for b := int64(0); b < blocks; b++ {
-				if _, err := fp.Read(readBuf); err != nil {
-					break
-				}
-			}
-			_ = fp.Close()
-		})
-		totalMiB = float64(actualBigSize) * float64(threads) / (1024 * 1024)
-		secs = dur.Seconds()
-		results = append(results, row{
-			item:  "Read big file",
-			value: fmt.Sprintf("%.2f MiB/s", totalMiB/secs),
-			cost:  fmt.Sprintf("%.2f s/file", secs/float64(threads)),
-		})
-	}
-
-	// ── small files ───────────────────────────────────────────────────────────
-	if smallCount > 0 {
-		// Pre-generate full small-file content for one-shot write.
-		// Small files fit entirely within a single TOAST chunk (4 MiB default),
-		// so one-shot write still produces only INSERT, not UPDATE.
-		var smallBuf []byte
-		if smallSize <= blockSize {
-			smallBuf = buf[:smallSize]
-		} else {
-			smallBuf = make([]byte, smallSize)
-			rand.Read(smallBuf) //nolint:gosec
-		}
-
-		fmt.Printf("Writing %d small file(s) × %d thread(s) ...\n",
-			smallCount, threads)
-		dur := runParallel(func(idx int) {
-			for i := 0; i < smallCount; i++ {
-				fname := filepath.Join(tmpdir, fmt.Sprintf("small.%d.%d", idx, i))
-				fp, err := os.OpenFile(fname, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "bench: open %s: %v\n", fname, err)
-					continue
-				}
-				if _, err := fp.Write(smallBuf); err != nil {
-					fmt.Fprintf(os.Stderr, "bench: write %s: %v\n", fname, err)
-				}
-				_ = fp.Close()
-			}
-		})
-		totalFiles := float64(smallCount * threads)
-		secs := dur.Seconds()
-		results = append(results, row{
-			item:  "Write small file",
-			value: fmt.Sprintf("%.1f files/s", totalFiles/secs),
-			cost:  fmt.Sprintf("%.2f ms/file", secs*1000/totalFiles),
-		})
-
-		fmt.Printf("Reading %d small file(s) × %d thread(s) ...\n",
-			smallCount, threads)
-		rsbuf := make([]byte, smallSize)
-		dur = runParallel(func(idx int) {
-			for i := 0; i < smallCount; i++ {
-				fname := filepath.Join(tmpdir, fmt.Sprintf("small.%d.%d", idx, i))
-				fp, err := os.Open(fname)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "bench: open %s: %v\n", fname, err)
-					continue
-				}
-				if _, err := fp.Read(rsbuf); err != nil {
-					fmt.Fprintf(os.Stderr, "bench: read %s: %v\n", fname, err)
-				}
-				_ = fp.Close()
-			}
-		})
-		secs = dur.Seconds()
-		results = append(results, row{
-			item:  "Read small file",
-			value: fmt.Sprintf("%.1f files/s", totalFiles/secs),
-			cost:  fmt.Sprintf("%.2f ms/file", secs*1000/totalFiles),
-		})
-
-		fmt.Printf("Stat %d small file(s) × %d thread(s) ...\n",
-			smallCount, threads)
-		dur = runParallel(func(idx int) {
-			for i := 0; i < smallCount; i++ {
-				fname := filepath.Join(tmpdir, fmt.Sprintf("small.%d.%d", idx, i))
-				_, _ = os.Stat(fname)
-			}
-		})
-		secs = dur.Seconds()
-		results = append(results, row{
-			item:  "Stat file",
-			value: fmt.Sprintf("%.1f files/s", totalFiles/secs),
-			cost:  fmt.Sprintf("%.2f ms/file", secs*1000/totalFiles),
-		})
+		return err
 	}
 
 	// ── print results ─────────────────────────────────────────────────────────
@@ -256,11 +90,37 @@ func runBench(cmd *cobra.Command, args []string) error {
 		benchThreads,
 	)
 
-	// Build header + data rows as string slices for the table printer.
+	type row struct{ item, value, cost string }
+	var rows []row
+
+	if bigSize > 0 {
+		rows = append(rows,
+			row{"Write big file",
+				fmt.Sprintf("%.2f MiB/s", res.WriteBigMiBs),
+				fmt.Sprintf("%.2f s/file", res.WriteBigSecsPerFile)},
+			row{"Read big file",
+				fmt.Sprintf("%.2f MiB/s", res.ReadBigMiBs),
+				fmt.Sprintf("%.2f s/file", res.ReadBigSecsPerFile)},
+		)
+	}
+	if cfg.SmallCount > 0 {
+		rows = append(rows,
+			row{"Write small file",
+				fmt.Sprintf("%.1f files/s", res.WriteSmallPerSec),
+				fmt.Sprintf("%.2f ms/file", res.WriteSmallMsPerFile)},
+			row{"Read small file",
+				fmt.Sprintf("%.1f files/s", res.ReadSmallPerSec),
+				fmt.Sprintf("%.2f ms/file", res.ReadSmallMsPerFile)},
+			row{"Stat file",
+				fmt.Sprintf("%.1f files/s", res.StatPerSec),
+				fmt.Sprintf("%.2f ms/file", res.StatMsPerFile)},
+		)
+	}
+
 	header := []string{"ITEM", "VALUE", "COST"}
 	var tableRows [][]string
 	tableRows = append(tableRows, header)
-	for _, r := range results {
+	for _, r := range rows {
 		tableRows = append(tableRows, []string{r.item, r.value, r.cost})
 	}
 	printBenchTable(tableRows)

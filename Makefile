@@ -129,3 +129,13 @@ images-push: images-multi
 	$(PODMAN) manifest push --all $(PG_TAG) docker://$(PG_TAG)
 	$(PODMAN) manifest push --all $(BACKUP_TAG) docker://$(BACKUP_TAG)
 	@echo "Pushed multi-arch images to registry"
+
+# ── GUI ───────────────────────────────────────────────────────────────────────
+
+# Build the desktop GUI (requires wails CLI: go install github.com/wailsapp/wails/v2/cmd/wails@latest)
+gui:
+	cd gui && wails build
+
+# Run the GUI in dev mode with hot-reload
+gui-dev:
+	cd gui && wails dev

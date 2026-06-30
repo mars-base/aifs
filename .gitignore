@@ -4,3 +4,10 @@ aifs
 PLAN.md
 .claude/
 scripts/todo.md
+
+# GUI build artifacts
+gui/gui
+gui/gui.exe
+gui/build/bin/
+gui/frontend/dist/
+gui/frontend/node_modules/

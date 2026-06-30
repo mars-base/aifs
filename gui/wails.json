@@ -1,0 +1,26 @@
+{
+  "name": "aifs-gui",
+  "outputfilename": "aifs-gui",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "mars-base",
+    "email": ""
+  },
+  "info": {
+    "productName": "aifs GUI",
+    "productVersion": "1.0.0",
+    "productIdentifier": "com.mars-base.aifs-gui",
+    "icon": "build/appicon.png",
+    "fileAssociations": [],
+    "protocols": []
+  },
+  "debounceMS": 100,
+  "devServer": "",
+  "appargs": "",
+  "runNonNativeMacOS": false,
+  "webviewGpuPolicy": "always",
+  "nsis": {}
+}

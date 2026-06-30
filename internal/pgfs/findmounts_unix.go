@@ -1,19 +1,15 @@
 //go:build !windows
 
-package cli
+package pgfs
 
 import (
 	"path/filepath"
 	"strings"
 )
 
-// parseAIFSArgs parses the argument list of a process and returns the
-// -i / --instance value and the positional mountpoint argument that follows
-// the "mount" subcommand.  Returns ("", "") if this does not look like an
-// aifs mount invocation.
-//
-// args must already be split into individual tokens (no NUL bytes).
-// args[0] is expected to be the executable path.
+// parseAIFSArgs inspects an argv slice and returns the -i/--instance value
+// and the positional mountpoint argument that follows the "mount" subcommand.
+// Returns ("", "") if the argv does not look like an aifs mount invocation.
 func parseAIFSArgs(args []string) (instance, mountpoint string) {
 	if len(args) == 0 {
 		return
@@ -41,7 +37,7 @@ func parseAIFSArgs(args []string) (instance, mountpoint string) {
 		return "", ""
 	}
 
-	// Find the first non-flag argument after "mount".
+	// First non-flag argument after "mount" is the mountpoint.
 	foundMount := false
 	for i := 1; i < len(args); i++ {
 		s := args[i]
@@ -52,9 +48,8 @@ func parseAIFSArgs(args []string) (instance, mountpoint string) {
 			continue
 		}
 		if strings.HasPrefix(s, "-") {
-			// Boolean flags take no value.
 			if s == "-d" || s == "--background" || s == "-l" || s == "--list" {
-				continue
+				continue // boolean flags, no value
 			}
 			i++ // skip flag value
 			continue

@@ -4,10 +4,8 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mars-base/aifs/internal/pgfs"
@@ -15,43 +13,23 @@ import (
 
 // activeAIFSMounts returns FUSE mount points for the given instance.
 //
-// Primary path (v1.2.x+): use the shared mount-state file which records
-// instance names alongside mount points.
-//
-// Fallback (old-style mounts without state file): scan /dev/fuse holders in
-// /proc to reconstruct instance→mountpoint mappings from process cmdlines.
-// This handles the common case where mounts were created before state tracking
-// was added. If the cmdline-based scan yields no results we fall back to
-// returning all aifs FUSE entries from /proc/self/mounts.
+// Uses pgfs.FindInstanceMounts for the primary path (state file) and the
+// process-scan fallback.  As a final resort for very old mounts where neither
+// the state file nor any aifs process is visible, falls back to
+// /proc/self/mounts + advisory-lock confirmation.
 func activeAIFSMounts(ctx context.Context, instance, pgURL, tablePrefix string) ([]string, error) {
 	if instance != "" {
-		records, err := pgfs.ListMountState()
+		mounts, err := pgfs.FindInstanceMounts(instance)
 		if err != nil {
 			return nil, err
 		}
-		if len(records) > 0 {
-			var mounts []string
-			for _, rec := range records {
-				if rec.Instance == instance {
-					mounts = append(mounts, rec.MountPoint)
-				}
-			}
+		if len(mounts) > 0 {
 			return mounts, nil
 		}
 
-		// State file is empty: try to reconstruct from /proc cmdlines.
-		procMounts := procFUSEInstanceMounts()
-		if mps, ok := procMounts[instance]; ok {
-			return mps, nil
-		}
-		// procMounts had entries for other instances but none for ours:
-		// this instance is not currently mounted.
-		if len(procMounts) > 0 {
-			return nil, nil
-		}
-
-		// procFUSEInstanceMounts returned nothing (no aifs FUSE processes found at
-		// all). Fall back to /proc/self/mounts scan + advisory-lock confirmation.
+		// Last resort: /proc/self/mounts scan + advisory-lock check.
+		// Handles the edge case where the mount process is already gone but the
+		// kernel mount is still alive (e.g. zombie mount after a crash).
 		all, err := procAIFSMounts()
 		if err != nil || len(all) == 0 {
 			return nil, err
@@ -64,69 +42,6 @@ func activeAIFSMounts(ctx context.Context, instance, pgURL, tablePrefix string) 
 	}
 
 	return procAIFSMounts()
-}
-
-// procFUSEInstanceMounts scans /proc/*/cmdline for aifs processes that hold
-// /dev/fuse open, parses -i and mountpoint, and returns instance→[]mountpoint.
-func procFUSEInstanceMounts() map[string][]string {
-	result := make(map[string][]string)
-
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return result
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		pid := e.Name()
-		if pid == "" || pid[0] < '0' || pid[0] > '9' {
-			continue
-		}
-		if !hasFUSEFD(pid) {
-			continue
-		}
-
-		raw, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline"))
-		if err != nil {
-			continue
-		}
-		// /proc/<pid>/cmdline is NUL-separated; split and strip empties.
-		parts := bytes.Split(raw, []byte{0})
-		args := make([]string, 0, len(parts))
-		for _, p := range parts {
-			if s := string(p); s != "" {
-				args = append(args, s)
-			}
-		}
-
-		inst, mp := parseAIFSArgs(args)
-		if inst == "" || mp == "" {
-			continue
-		}
-		result[inst] = append(result[inst], mp)
-	}
-	return result
-}
-
-// hasFUSEFD returns true if the process with the given PID string has a
-// symbolic link in /proc/<pid>/fd pointing to /dev/fuse.
-func hasFUSEFD(pid string) bool {
-	fds, err := os.ReadDir(filepath.Join("/proc", pid, "fd"))
-	if err != nil {
-		return false
-	}
-	for _, fd := range fds {
-		target, err := os.Readlink(filepath.Join("/proc", pid, "fd", fd.Name()))
-		if err != nil {
-			continue
-		}
-		if target == "/dev/fuse" {
-			return true
-		}
-	}
-	return false
 }
 
 func procAIFSMounts() ([]string, error) {

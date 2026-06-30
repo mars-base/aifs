@@ -64,13 +64,14 @@ func (a *App) ListInstances() ([]InstanceInfo, error) {
 		return nil, err
 	}
 
-	// Build a map of instance name → active mount point.
+	// Build a map of instance name → active mount points.
+	// FindInstanceMounts uses the state file first; falls back to scanning
+	// running processes (Linux: /proc cmdlines, macOS: ps) so that mounts
+	// created before state tracking was introduced are also visible.
 	mountMap := map[string]string{}
-	if mounts, err := pgfs.ListMountState(); err == nil {
-		for _, m := range mounts {
-			if m.Instance != "" {
-				mountMap[m.Instance] = m.MountPoint
-			}
+	for instName := range cfg.Instances {
+		if mps, err := pgfs.FindInstanceMounts(instName); err == nil && len(mps) > 0 {
+			mountMap[instName] = mps[0] // show the first (usually only) mount point
 		}
 	}
 
