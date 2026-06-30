@@ -159,25 +159,25 @@ function InstanceCard({ inst, onAction, onClearErr }: { inst: InstanceInfo; onAc
       )}
 
       {/* Mount / Umount */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <input
           type="text"
           value={mountPoint}
           onChange={(e) => { setMountPoint(e.target.value); setUserEdited(true) }}
           placeholder="~/mnt/aifs  or  Z:\"
-          className="flex-1 text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 focus:outline-none focus:border-slate-400"
+          className="flex-1 min-w-[120px] text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 focus:outline-none focus:border-slate-400"
         />
         <button
           disabled={busyOp === 'mount' || !inst.running || !mountPoint || !!inst.mountPath}
           onClick={() => wrap('mount', () => MountInstance(inst.name, mountPoint), true)}
-          className="px-3 py-1.5 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="px-3 py-1.5 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
         >
           Mount
         </button>
         <button
           disabled={busyOp === 'mount' || !inst.mountPath}
           onClick={() => wrap('mount', () => UmountInstance(inst.mountPath), true)}
-          className="px-3 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="px-3 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
         >
           Umount
         </button>
