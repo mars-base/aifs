@@ -87,7 +87,7 @@ function InstanceCard({ inst, onAction }: { inst: InstanceInfo; onAction: () => 
           className="flex-1 text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 focus:outline-none focus:border-slate-400"
         />
         <button
-          disabled={busy || !inst.running || !mountPoint}
+          disabled={busy || !inst.running || !mountPoint || !!inst.mountPath}
           onClick={() => wrap(() => MountInstance(inst.name, mountPoint))}
           className="px-3 py-1.5 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
