@@ -67,15 +67,7 @@ func activeAIFSMounts(ctx context.Context, instance, pgURL, tablePrefix string) 
 }
 
 // procFUSEInstanceMounts scans /proc/*/cmdline for aifs processes that hold
-// /dev/fuse open, extracts the -i flag and positional mountpoint argument, and
-// returns a map of instance name → []mountpoint.
-//
-// This handles the legacy case (mounts created before the state file was
-// introduced). It relies on the CLI conventions:
-//
-//	aifs -i <name> mount <mountpoint>
-//	aifs --instance <name> mount <mountpoint>
-//	aifs -c <cfg> -i <name> mount <mountpoint>
+// /dev/fuse open, parses -i and mountpoint, and returns instance→[]mountpoint.
 func procFUSEInstanceMounts() map[string][]string {
 	result := make(map[string][]string)
 
@@ -92,20 +84,28 @@ func procFUSEInstanceMounts() map[string][]string {
 		if pid == "" || pid[0] < '0' || pid[0] > '9' {
 			continue
 		}
-		// Check if this process has /dev/fuse open.
 		if !hasFUSEFD(pid) {
 			continue
 		}
 
-		cmdline, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline"))
+		raw, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline"))
 		if err != nil {
 			continue
 		}
-		inst, mountpoint := parseAIFSCmdline(cmdline)
-		if inst == "" || mountpoint == "" {
+		// /proc/<pid>/cmdline is NUL-separated; split and strip empties.
+		parts := bytes.Split(raw, []byte{0})
+		args := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if s := string(p); s != "" {
+				args = append(args, s)
+			}
+		}
+
+		inst, mp := parseAIFSArgs(args)
+		if inst == "" || mp == "" {
 			continue
 		}
-		result[inst] = append(result[inst], mountpoint)
+		result[inst] = append(result[inst], mp)
 	}
 	return result
 }
@@ -127,69 +127,6 @@ func hasFUSEFD(pid string) bool {
 		}
 	}
 	return false
-}
-
-// parseAIFSCmdline parses a NUL-separated /proc/<pid>/cmdline and returns the
-// -i / --instance value and the positional argument that follows "mount".
-// Returns ("", "") if this is not an aifs mount command.
-func parseAIFSCmdline(raw []byte) (instance, mountpoint string) {
-	args := bytes.Split(raw, []byte{0})
-	if len(args) == 0 {
-		return
-	}
-	// Verify this is an aifs process.
-	exe := string(args[0])
-	if !strings.HasSuffix(filepath.Base(exe), "aifs") {
-		return
-	}
-	// Scan for "mount" subcommand and -i / --instance flag.
-	strs := make([]string, 0, len(args))
-	for _, a := range args {
-		if s := string(a); s != "" {
-			strs = append(strs, s)
-		}
-	}
-	var hasMountCmd bool
-	for i := 1; i < len(strs); i++ {
-		s := strs[i]
-		switch {
-		case s == "mount":
-			hasMountCmd = true
-		case (s == "-i" || s == "--instance") && i+1 < len(strs):
-			instance = strs[i+1]
-			i++
-		case strings.HasPrefix(s, "-i") && len(s) > 2:
-			instance = s[2:]
-		case strings.HasPrefix(s, "--instance="):
-			instance = strings.TrimPrefix(s, "--instance=")
-		}
-	}
-	if !hasMountCmd {
-		return "", ""
-	}
-	// The mountpoint is the first non-flag argument after "mount".
-	foundMount := false
-	for i := 1; i < len(strs); i++ {
-		s := strs[i]
-		if !foundMount {
-			if s == "mount" {
-				foundMount = true
-			}
-			continue
-		}
-		// Skip flags and their values.
-		if strings.HasPrefix(s, "-") {
-			// Consume next arg if this flag takes a value.
-			if s == "-d" || s == "--background" || s == "-l" || s == "--list" {
-				continue
-			}
-			i++ // skip flag value
-			continue
-		}
-		mountpoint = s
-		return
-	}
-	return "", ""
 }
 
 func procAIFSMounts() ([]string, error) {
