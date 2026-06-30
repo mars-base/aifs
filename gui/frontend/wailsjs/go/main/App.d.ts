@@ -29,6 +29,10 @@ export function RestoreInstance(arg1:string,arg2:string,arg3:boolean):Promise<vo
 
 export function RunBench(arg1:string,arg2:string,arg3:number):Promise<main.BenchResult>;
 
+export function ShowAlert(arg1:string,arg2:string):Promise<void>;
+
+export function ShowConfirm(arg1:string,arg2:string):Promise<boolean>;
+
 export function StartInstance(arg1:string):Promise<void>;
 
 export function StopInstance(arg1:string):Promise<void>;

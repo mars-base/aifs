@@ -6,6 +6,8 @@ import {
   ListSnapshots,
   CreateSnapshot,
   DeleteSnapshot,
+  ShowConfirm,
+  ShowAlert,
 } from '../wailsjs/go'
 import { EventsOn } from '../wailsjs/runtime'
 import { fmtUTC } from '../utils/pitr'
@@ -66,12 +68,12 @@ export default function Snapshots() {
     loadSnapshots()
   }, [loadSnapshots])
 
-  const handleDelete = (snap: Snapshot) => {
+  const handleDelete = async (snap: Snapshot) => {
     if (snap.type === 'full') {
       const fulls = snapshots.filter(s => s.type === 'full')
       // Guard: only one full backup — cannot delete it
       if (fulls.length <= 1) {
-        window.alert('Cannot delete the only full backup.\nAt least one full backup must be retained to support point-in-time recovery.')
+        await ShowAlert('Cannot Delete', 'Cannot delete the only full backup.\nAt least one full backup must be retained to support point-in-time recovery.')
         return
       }
       // Guard: disallow deleting the newest full backup
@@ -79,16 +81,17 @@ export default function Snapshots() {
         new Date(a.timestamp) > new Date(b.timestamp) ? a : b
       )
       if (snap.name === newestFull.name) {
-        window.alert(
-          'Cannot delete the newest full backup.\n\n' +
-          'To free up storage, delete an older full backup instead — ' +
+        await ShowAlert(
+          'Cannot Delete',
+          'Cannot delete the newest full backup.\n\nTo free up storage, delete an older full backup instead — ' +
           'pgBackRest will automatically clean up the WAL archive segments that are no longer needed.'
         )
         return
       }
     }
     const label = `${snap.type} — ${fmtUTC(snap.timestamp)}`
-    if (!window.confirm(`Delete snapshot "${snap.name}" (${label})?\n\nThis action cannot be undone.`)) return
+    const ok = await ShowConfirm('Delete Snapshot', `Delete snapshot "${snap.name}" (${label})?\n\nThis action cannot be undone.`)
+    if (!ok) return
     wrap(() => DeleteSnapshot(selected, snap.name))
   }
 

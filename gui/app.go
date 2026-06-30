@@ -654,3 +654,29 @@ func (a *App) OpenConfigFile() {
 	}
 	_ = cmd.Start()
 }
+
+// ShowConfirm shows a native confirmation dialog and returns true if the user
+// clicked "Yes". Uses Wails MessageDialog instead of window.confirm() because
+// macOS WKWebView does not support modal web dialogs.
+func (a *App) ShowConfirm(title, message string) (bool, error) {
+	result, err := wailsruntime.MessageDialog(a.ctx, wailsruntime.MessageDialogOptions{
+		Type:    wailsruntime.QuestionDialog,
+		Title:   title,
+		Message: message,
+		Buttons: []string{"No", "Yes"},
+	})
+	if err != nil {
+		return false, err
+	}
+	return result == "Yes", nil
+}
+
+// ShowAlert shows a native alert dialog.
+func (a *App) ShowAlert(title, message string) {
+	_, _ = wailsruntime.MessageDialog(a.ctx, wailsruntime.MessageDialogOptions{
+		Type:    wailsruntime.WarningDialog,
+		Title:   title,
+		Message: message,
+		Buttons: []string{"OK"},
+	})
+}

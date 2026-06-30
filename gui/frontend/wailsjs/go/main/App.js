@@ -54,6 +54,14 @@ export function RunBench(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunBench'](arg1, arg2, arg3);
 }
 
+export function ShowAlert(arg1, arg2) {
+  return window['go']['main']['App']['ShowAlert'](arg1, arg2);
+}
+
+export function ShowConfirm(arg1, arg2) {
+  return window['go']['main']['App']['ShowConfirm'](arg1, arg2);
+}
+
 export function StartInstance(arg1) {
   return window['go']['main']['App']['StartInstance'](arg1);
 }

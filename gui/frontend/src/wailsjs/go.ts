@@ -71,3 +71,5 @@ export const RunBench = (path: string, bigSize: string, threads: number): Promis
 
 export const GetConfigPath = (): Promise<string> => call('GetConfigPath')
 export const OpenConfigFile = (): Promise<void> => call('OpenConfigFile')
+export const ShowConfirm = (title: string, message: string): Promise<boolean> => call('ShowConfirm', title, message)
+export const ShowAlert = (title: string, message: string): Promise<void> => call('ShowAlert', title, message)
