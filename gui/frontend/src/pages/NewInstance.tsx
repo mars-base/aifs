@@ -76,6 +76,8 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
           </label>
           <input
             type="text"
+            autoCapitalize="off"
+            autoCorrect="off"
             value={name}
             onChange={e => { setName(e.target.value); setErr(''); setSuccess('') }}
             placeholder="e.g. ai03"
@@ -113,7 +115,7 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
               <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${pitr ? 'translate-x-5' : 'translate-x-0.5'}`} />
             </div>
             <div>
-              <span className="text-sm text-slate-300">Enable PITR (pgBackRest)</span>
+              <span className="text-sm text-slate-300">Enable PITR</span>
               <p className="text-xs text-slate-500 mt-0.5">Continuous WAL archiving and point-in-time recovery</p>
             </div>
           </label>
