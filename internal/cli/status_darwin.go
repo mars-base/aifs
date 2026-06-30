@@ -3,13 +3,52 @@
 package cli
 
 import (
+	"context"
 	"strings"
 
+	"github.com/mars-base/aifs/internal/pgfs"
 	"golang.org/x/sys/unix"
 )
 
-// activeAIFSMounts returns local FUSE mount points whose source is "aifs".
-func activeAIFSMounts() ([]string, error) {
+// activeAIFSMounts returns FUSE mount points for the given instance.
+//
+// Primary path (v1.2.x+): use the shared mount-state file which records
+// instance names alongside mount points.
+//
+// Fallback (old-style mounts without state file): scan Getfsstat for all aifs
+// entries. If the instance has a PG advisory lock held (confirmed via
+// IsInstanceMounted), the full list is returned as a best-effort approximation.
+func activeAIFSMounts(ctx context.Context, instance, pgURL, tablePrefix string) ([]string, error) {
+	if instance != "" {
+		records, err := pgfs.ListMountState()
+		if err != nil {
+			return nil, err
+		}
+		if len(records) > 0 {
+			var mounts []string
+			for _, rec := range records {
+				if rec.Instance == instance {
+					mounts = append(mounts, rec.MountPoint)
+				}
+			}
+			return mounts, nil
+		}
+		// State file empty: fall back to Getfsstat + advisory-lock check.
+		all, err := getfsstatAIFSMounts()
+		if err != nil || len(all) == 0 {
+			return nil, err
+		}
+		mounted, _ := pgfs.IsInstanceMounted(ctx, pgURL, tablePrefix)
+		if mounted {
+			return all, nil
+		}
+		return nil, nil
+	}
+
+	return getfsstatAIFSMounts()
+}
+
+func getfsstatAIFSMounts() ([]string, error) {
 	n, err := unix.Getfsstat(nil, unix.MNT_NOWAIT)
 	if err != nil {
 		return nil, err

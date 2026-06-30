@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -144,7 +145,7 @@ requiring an aifs instance configuration:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// -l / --list: scan system mount table for active aifs mounts.
 		if mountList {
-			mounts, err := activeAIFSMounts()
+			mounts, err := activeAIFSMounts(cmd.Context(), "", "", "")
 			if err != nil {
 				return fmt.Errorf("listing mounts: %w", err)
 			}
@@ -205,7 +206,21 @@ requiring an aifs instance configuration:
 		if mountBackground {
 			return mountInBackground(mountPoint)
 		}
-		return pgfs.Mount(cmd.Context(), cfg.GetPostgresURL(), fsCfg.TablePrefix, cfg.Podman.DataDir, mountPoint)
+
+		// Record mount state so `status` can show the active mount point.
+		rec := pgfs.MountRecord{
+			MountPoint: mountPoint,
+			Instance:   cfg.Instance,
+			PID:        os.Getpid(),
+		}
+		if err := pgfs.AddMountState(rec); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: recording mount state: %v\n", err)
+		}
+		mountErr := pgfs.Mount(cmd.Context(), cfg.GetPostgresURL(), fsCfg.TablePrefix, cfg.Podman.DataDir, mountPoint)
+		if rmErr := pgfs.RemoveMountState(mountPoint); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: removing mount state: %v\n", rmErr)
+		}
+		return mountErr
 	},
 }
 

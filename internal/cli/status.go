@@ -56,8 +56,9 @@ var statusCmd = &cobra.Command{
 			}
 		}
 
-		// Active FUSE mounts
-		if mounts, err := activeAIFSMounts(); err == nil {
+		// Active FUSE mounts (filtered to this instance)
+		fsCfg := cfg.EffectiveFilesystem()
+		if mounts, err := activeAIFSMounts(cmd.Context(), cfg.Instance, cfg.GetPostgresURL(), fsCfg.TablePrefix); err == nil {
 			if len(mounts) > 0 {
 				fmt.Println("\nActive mounts:")
 				for _, m := range mounts {
