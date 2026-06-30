@@ -673,7 +673,85 @@ func (m *Manager) RunRestoreContainer(stanza, target string, promote, tailLogs b
 	return out, nil
 }
 
-// --- Internal methods ---------------------------------------------
+// RunRestoreContainerToWriter is like RunRestoreContainer but streams all
+// stdout/stderr output to w in addition to capturing it internally.
+func (m *Manager) RunRestoreContainerToWriter(w io.Writer, stanza, target string, promote bool) (string, error) {
+	confPath, err := m.writeInstancePgbackrestConf()
+	if err != nil {
+		return "", fmt.Errorf("generating pgbackrest.conf: %w", err)
+	}
+
+	restoreName := fmt.Sprintf("aifs-restore-%s-%d", m.cfg.Podman.ContainerName, os.Getpid())
+	orphanPrefix := "aifs-restore-" + m.cfg.Podman.ContainerName + "-"
+	rmOrphans := podmanCommand(m.podman, "ps", "-a", "--filter", "name="+orphanPrefix, "-q")
+	if out, err := rmOrphans.Output(); err == nil {
+		for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			id = strings.TrimSpace(id)
+			if id != "" && id != restoreName {
+				m.run("rm", "-f", id)
+			}
+		}
+	}
+	defer func() { m.run("rm", "-f", restoreName) }()
+
+	dataVol := hostMountPath(m.cfg.Podman.DataDir)
+	wipe := podmanCommand(m.podman, "run", "--rm",
+		"-u", "root",
+		"--name", restoreName+"-wipe",
+		"--network", "host",
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", dataVol),
+		m.cfg.Podman.ImageTag,
+		"sh", "-c", "rm -rf /var/lib/postgresql/data && mkdir -p /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data",
+	)
+	if err := wipe.Run(); err != nil {
+		return "", fmt.Errorf("wiping data directory before restore: %w", err)
+	}
+
+	targetAction := "pause"
+	if promote {
+		targetAction = "promote"
+	}
+
+	args := []string{
+		"run", "--rm",
+		"--name", restoreName,
+		"--network", "host",
+		"-v", fmt.Sprintf("%s:/var/lib/postgresql", dataVol),
+		"-v", fmt.Sprintf("%s:/var/lib/pgbackrest", hostMountPath(m.cfg.Backup.DataDir)),
+		"-v", fmt.Sprintf("%s:/etc/pgbackrest/pgbackrest.conf:ro", hostMountPath(confPath)),
+		m.cfg.Podman.ImageTag,
+		"pgbackrest", "--stanza=" + stanza, "restore",
+		"--type=time", "--target=" + target,
+		"--target-action=" + targetAction,
+		"--log-level-console=info",
+	}
+
+	slog.Debug("podman", "args", args)
+	cmd := podmanCommand(m.podman, args...)
+
+	var stdoutBuf, stderrBuf strings.Builder
+	cmd.Stdout = io.MultiWriter(w, &stdoutBuf)
+	cmd.Stderr = io.MultiWriter(w, &stderrBuf)
+
+	err = cmd.Run()
+	out := stdoutBuf.String()
+
+	if err != nil && isPodmanCleanupNoise(stderrBuf.String()) && strings.Contains(out, "completed successfully") {
+		return out, nil
+	}
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			errMsg := stderrBuf.String()
+			if errMsg == "" {
+				errMsg = out
+			}
+			return "", fmt.Errorf("podman %s: %s", strings.Join(args, " "), errMsg)
+		}
+		return "", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
+	}
+	return out, nil
+}
+
 
 func (m *Manager) run(args ...string) (string, error) {
 	slog.Debug("podman", "args", args)
@@ -825,8 +903,10 @@ pg1-port=%d
 [global]
 repo1-path=/var/lib/pgbackrest
 repo1-retention-full=%d
+repo1-retention-archive-type=full
+repo1-retention-archive=%d
 log-level-console=info
-`, stanza, m.cfg.Postgres.User, m.cfg.Podman.HostPort, m.cfg.Backup.RetentionFull)
+`, stanza, m.cfg.Postgres.User, m.cfg.Podman.HostPort, m.cfg.Backup.RetentionFull, m.cfg.Backup.RetentionFull)
 
 	confPath := filepath.Join(m.dataDir, fmt.Sprintf("pgbackrest-%s.conf", m.cfg.Podman.ContainerName))
 

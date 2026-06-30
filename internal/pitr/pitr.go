@@ -5,6 +5,7 @@ package pitr
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -128,6 +129,43 @@ func (m *Manager) CreateSnapshot(backupType string, tailLogs bool) (*Snapshot, e
 		Type:      backupType,
 	}
 	fmt.Printf("  [OK] Snapshot created: %s (%s)\n", label, backupType)
+	return snap, nil
+}
+
+// CreateSnapshotToWriter creates a backup snapshot, streaming all pgBackRest
+// output line-by-line to w.  It does not write to os.Stdout/os.Stderr, making
+// it suitable for GUI use where output must be forwarded via events.
+func (m *Manager) CreateSnapshotToWriter(w io.Writer, backupType string) (*Snapshot, error) {
+	if backupType == "" {
+		backupType = "full"
+	}
+
+	stanza := m.cfg.PITR.PgBackRestStanza
+	args := []string{"pgbackrest",
+		"--stanza=" + stanza,
+		"backup",
+		"--type=" + backupType,
+		"--log-level-console=info",
+	}
+
+	fmt.Fprintf(w, "-> Creating %s backup...\n", backupType)
+	out, err := m.backup.BackupExecToWriter(w, args...)
+	if err != nil {
+		_ = m.backup.EnsureRepoReadable()
+		return nil, fmt.Errorf("creating backup: %w\n%s", err, out)
+	}
+
+	if err := m.backup.EnsureRepoReadable(); err != nil {
+		fmt.Fprintf(w, "  [!] repo readability warning: %v\n", err)
+	}
+
+	label := extractLabel(out)
+	snap := &Snapshot{
+		Name:      label,
+		Timestamp: time.Now(),
+		Type:      backupType,
+	}
+	fmt.Fprintf(w, "  [OK] Snapshot created: %s (%s)\n", label, backupType)
 	return snap, nil
 }
 
@@ -290,7 +328,72 @@ func (m *Manager) Restore(targetTime time.Time, promote, dryRun, tailLogs bool) 
 	return nil
 }
 
-// --- Internal methods ---------------------------------------------
+// RestoreToWriter performs PITR like Restore but streams all progress output
+// to w so callers (e.g. the GUI) can display real-time logs.
+func (m *Manager) RestoreToWriter(w io.Writer, targetTime time.Time, promote bool) error {
+	stanza := m.cfg.PITR.PgBackRestStanza
+	targetStr := targetTime.Format("2006-01-02 15:04:05-07")
+
+	fmt.Fprintf(w, "!  Restoring PostgreSQL to %s (target-action=%s)\n", targetStr, targetActionName(promote))
+
+	// Fast path: already paused at target time → just promote.
+	if promote {
+		if paused, _ := m.podman.PGIsPausedInRecovery(); paused {
+			replayed, err := m.podman.PGLastXactReplayTimestamp()
+			if err == nil && !replayed.IsZero() {
+				diff := targetTime.Sub(replayed)
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff < 2*time.Second {
+					fmt.Fprintln(w, "  Cluster already paused at target time, promoting directly...")
+					out, err := m.podman.PGPromoteAfterRecovery()
+					if err != nil {
+						return fmt.Errorf("promoting after recovery: %w\n%s", err, out)
+					}
+					fmt.Fprintln(w, "[OK] Cluster promoted to read-write")
+					return nil
+				}
+				fmt.Fprintf(w, "  Paused at %s, target is %s — full restore required\n",
+					replayed.Truncate(time.Second).Format("15:04:05"),
+					targetTime.Truncate(time.Second).Format("15:04:05"))
+			}
+		}
+	}
+
+	if err := m.backup.EnsureRepoReadable(); err != nil {
+		fmt.Fprintf(w, "  [!] repo readability warning: %v\n", err)
+	}
+
+	fmt.Fprintln(w, "  1/3 Stopping PostgreSQL...")
+	if err := m.podman.StopContainer(); err != nil {
+		return fmt.Errorf("stopping container: %w", err)
+	}
+
+	fmt.Fprintln(w, "  2/3 Running pgBackRest restore...")
+	_, err := m.podman.RunRestoreContainerToWriter(w, stanza, targetStr, promote)
+	if err != nil {
+		return fmt.Errorf("pgBackRest restore: %w", err)
+	}
+
+	_ = m.backup.EnsureRepoReadable()
+
+	fmt.Fprintln(w, "  3/3 Starting PostgreSQL...")
+	if err := m.podman.StartContainer(); err != nil {
+		return fmt.Errorf("starting container: %w", err)
+	}
+
+	if err := m.backup.AuthorizeKeyOnInstance(); err != nil {
+		fmt.Fprintf(w, "  [!] backup key authorization warning: %v\n", err)
+	}
+	if err := m.backup.EnsureBackupInfra(); err != nil {
+		fmt.Fprintf(w, "  [!] backup infra refresh warning: %v\n", err)
+	}
+
+	fmt.Fprintln(w, "[OK] Restore complete")
+	return nil
+}
+
 
 func (m *Manager) pgbackrest(tailLogs bool, args ...string) (string, error) {
 	slog.Debug("pgbackrest", "args", args)

@@ -41,6 +41,11 @@ func activeAIFSMounts(ctx context.Context, instance, pgURL, tablePrefix string) 
 		return nil, nil
 	}
 
+	// No instance filter: call FindInstanceMounts("") first so that stale
+	// entries in the state file get pruned as a side effect, then fall back
+	// to /proc/self/mounts for a complete picture (catches mounts that
+	// predate the state file).
+	_, _ = pgfs.FindInstanceMounts("")
 	return procAIFSMounts()
 }
 

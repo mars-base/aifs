@@ -1,4 +1,4 @@
-.PHONY: build run test clean install lint images image-pg image-backup
+.PHONY: build build-cli build-gui run test clean install lint images image-pg image-backup gui gui-dev
 
 # Variables
 BINARY_NAME := aifs
@@ -11,12 +11,23 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
-# Default target
+# Default target: build both CLI and GUI
 all: build
 
-# Build
-build:
+# Build CLI + GUI together, output both to build/
+build: build-cli build-gui
+
+# Build CLI only
+build-cli:
 	$(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/aifs
+
+# Build GUI only (requires wails: go install github.com/wailsapp/wails/v2/cmd/wails@latest)
+# wails always outputs to gui/build/bin/; copy to build/ next to the CLI so
+# resolveAifsBin() can find the aifs sibling at runtime.
+build-gui:
+	cd gui && wails build
+	mkdir -p $(BUILD_DIR)
+	cp gui/build/bin/aifs-gui $(BUILD_DIR)/$(BINARY_NAME)-gui
 
 # Install to $GOPATH/bin
 install:
@@ -130,12 +141,8 @@ images-push: images-multi
 	$(PODMAN) manifest push --all $(BACKUP_TAG) docker://$(BACKUP_TAG)
 	@echo "Pushed multi-arch images to registry"
 
-# ── GUI ───────────────────────────────────────────────────────────────────────
+# ── GUI dev ───────────────────────────────────────────────────────────────────
 
-# Build the desktop GUI (requires wails CLI: go install github.com/wailsapp/wails/v2/cmd/wails@latest)
-gui:
-	cd gui && wails build
-
-# Run the GUI in dev mode with hot-reload
+# Run the GUI in dev mode with hot-reload (frontend + backend live reload)
 gui-dev:
 	cd gui && wails dev

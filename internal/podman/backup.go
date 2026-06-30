@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -495,6 +496,14 @@ func (m *BackupManager) BackupExec(tailLogs bool, args ...string) (string, error
 		return execWithTimeoutStreaming(m.podman, podmanArgs, 10*time.Minute)
 	}
 	return execWithTimeout(m.podman, podmanArgs, 10*time.Minute)
+}
+
+// BackupExecToWriter runs a command inside the backup container, streaming
+// stdout/stderr to w in addition to collecting them for error reporting.
+// w may be nil (falls back to os.Stdout/os.Stderr only).
+func (m *BackupManager) BackupExecToWriter(w io.Writer, args ...string) (string, error) {
+	podmanArgs := append([]string{"exec", "-i=false", m.cfg.Backup.ContainerName}, args...)
+	return execWithTimeoutWriter(m.podman, podmanArgs, 10*time.Minute, w)
 }
 
 // --- Internal methods ---------------------------------------------

@@ -12,6 +12,57 @@ import (
 	"time"
 )
 
+// execWithTimeoutWriter runs podman streaming stdout/stderr to both w and
+// internal buffers.  If w is nil only the internal buffers are used.
+func execWithTimeoutWriter(podmanPath string, args []string, timeout time.Duration, w io.Writer) (string, error) {
+	slog.Debug("execWithTimeoutWriter", "args", args)
+	cmd := podmanCommand(podmanPath, args...)
+
+	var stdoutBuf, stderrBuf strings.Builder
+	if w != nil {
+		cmd.Stdout = io.MultiWriter(w, &stdoutBuf)
+		cmd.Stderr = io.MultiWriter(w, &stderrBuf)
+	} else {
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+	}
+
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		err := cmd.Run()
+		out := stdoutBuf.String()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				errMsg := stderrBuf.String()
+				if errMsg == "" {
+					errMsg = out
+				}
+				done <- result{"", fmt.Errorf("podman %s: %s", strings.Join(args, " "), errMsg)}
+				return
+			}
+			done <- result{"", fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)}
+			return
+		}
+		done <- result{out, nil}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return "", r.err
+		}
+		return r.out, nil
+	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		return "", fmt.Errorf("podman %s timed out after %v", strings.Join(args, " "), timeout)
+	}
+}
+
 // execWithTimeoutStreaming runs podman while also copying stdout/stderr to the
 // process stdout/stderr so logs are visible in real time. A copy of the output
 // is still returned for error reporting.
