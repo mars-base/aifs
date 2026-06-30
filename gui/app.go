@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"time"
 
 	"github.com/mars-base/aifs/internal/bench"
@@ -75,8 +76,15 @@ func (a *App) ListInstances() ([]InstanceInfo, error) {
 		}
 	}
 
-	var result []InstanceInfo
+	// Collect instance names in sorted order so the list is stable across calls.
+	names := make([]string, 0, len(cfg.Instances))
 	for name := range cfg.Instances {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var result []InstanceInfo
+	for _, name := range names {
 		info := InstanceInfo{Name: name, MountPath: mountMap[name]}
 
 		if err := cfg.SetInstance(name); err != nil {

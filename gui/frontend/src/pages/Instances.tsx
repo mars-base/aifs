@@ -115,7 +115,7 @@ export default function Instances() {
   const refresh = useCallback(async () => {
     try {
       const list = await ListInstances()
-      setInstances(list ?? [])
+      setInstances((list ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)))
       setErr('')
     } catch (e: unknown) {
       setErr(String(e))
@@ -126,7 +126,7 @@ export default function Instances() {
 
   useEffect(() => {
     refresh()
-    const timer = setInterval(refresh, 3000)
+    const timer = setInterval(refresh, 5000)
     return () => clearInterval(timer)
   }, [refresh])
 
