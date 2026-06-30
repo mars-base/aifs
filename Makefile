@@ -30,7 +30,13 @@ build-gui:
 	@echo "  • Building GUI..."
 	@cd gui && wails build
 	@mkdir -p $(BUILD_DIR)
-	@cp gui/build/bin/aifs-gui $(BUILD_DIR)/$(BINARY_NAME)-gui
+	@if [ -f gui/build/bin/aifs-gui ]; then \
+		cp gui/build/bin/aifs-gui $(BUILD_DIR)/$(BINARY_NAME)-gui; \
+	elif [ -f gui/build/bin/aifs-gui.app/Contents/MacOS/aifs-gui ]; then \
+		cp gui/build/bin/aifs-gui.app/Contents/MacOS/aifs-gui $(BUILD_DIR)/$(BINARY_NAME)-gui; \
+	else \
+		echo "ERROR: cannot find aifs-gui binary"; exit 1; \
+	fi
 	@echo "  • GUI built: $(BUILD_DIR)/$(BINARY_NAME)-gui"
 
 # Install to $GOPATH/bin
