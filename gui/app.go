@@ -409,6 +409,14 @@ type ConfigStatus struct {
 func (a *App) GetConfigStatus() ConfigStatus {
 	path := platform.DefaultConfigPath()
 	st := ConfigStatus{Path: path}
+
+	// Check if the file actually exists on disk first — config.Load()
+	// returns defaults (nil error) even when the file is missing, so we
+	// can't rely on its error to detect existence.
+	if _, err := os.Stat(path); err != nil {
+		return st // file doesn't exist, Exists remains false
+	}
+
 	cfg, err := config.Load(path)
 	if err == nil {
 		st.Exists = true
