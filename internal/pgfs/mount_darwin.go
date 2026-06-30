@@ -14,7 +14,11 @@ import (
 
 // Mount mounts the PG-backed filesystem at mountPoint.
 // This call blocks until the filesystem is unmounted.
-func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string) error {
+//
+// onMounted is called exactly once after the FUSE server has been successfully
+// established and the mount point is ready to use, but before Wait() blocks.
+// If nil, it is not called. It is never called when mounting fails.
+func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string, onMounted func()) error {
 	db, m, _, err := Open(ctx, pgURL, tablePrefix)
 	if err != nil {
 		return err
@@ -57,6 +61,9 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string)
 	}
 
 	fmt.Printf("mounted aifs at %s\n", mountPoint)
+	if onMounted != nil {
+		onMounted()
+	}
 	server.Wait()
 	return nil
 }

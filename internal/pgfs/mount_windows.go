@@ -85,7 +85,11 @@ func toWinFspMountPoint(mountPoint string) string {
 
 // Mount mounts the PG-backed filesystem at mountPoint using WinFsp/cgofuse.
 // This call blocks until the filesystem is unmounted.
-func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string) error {
+//
+// onMounted is called in a separate goroutine shortly after host.Mount()
+// begins blocking (WinFsp signals the mount asynchronously). It is never
+// called when mounting fails immediately. If nil, it is not called.
+func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string, onMounted func()) error {
 	dirPath := NormalizeMountPoint(mountPoint)
 	db, m, _, err := Open(ctx, pgURL, tablePrefix)
 	if err != nil {
@@ -141,6 +145,18 @@ func Mount(ctx context.Context, pgURL, tablePrefix, dataPath, mountPoint string)
 	}
 
 	fmt.Printf("mounted aifs at %s\n", mountPoint)
+	if onMounted != nil {
+		go func() {
+			sentinel := MountPathJoin(mountPoint, SentinelName)
+			for range 100 {
+				if _, err := os.Stat(sentinel); err == nil {
+					onMounted()
+					return
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}()
+	}
 	if !host.Mount(winFspMountPoint, nil) {
 		return fmt.Errorf("mounting %s failed", winFspMountPoint)
 	}

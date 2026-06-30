@@ -172,7 +172,7 @@ requiring an aifs instance configuration:
 			if mountBackground {
 				return mountInBackground(mountPoint)
 			}
-			return pgfs.Mount(cmd.Context(), mountURL, mountPrefix, "", mountPoint)
+			return pgfs.Mount(cmd.Context(), mountURL, mountPrefix, "", mountPoint, nil)
 		}
 
 		if err := loadConfig(); err != nil {
@@ -208,15 +208,20 @@ requiring an aifs instance configuration:
 		}
 
 		// Record mount state so `status` can show the active mount point.
+		// AddMountState is called from the onMounted callback, which fires only
+		// after the FUSE server is confirmed ready — so a failed mount never
+		// leaves a stale entry in the state file.
 		rec := pgfs.MountRecord{
 			MountPoint: mountPoint,
 			Instance:   cfg.Instance,
 			PID:        os.Getpid(),
 		}
-		if err := pgfs.AddMountState(rec); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: recording mount state: %v\n", err)
+		onMounted := func() {
+			if err := pgfs.AddMountState(rec); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: recording mount state: %v\n", err)
+			}
 		}
-		mountErr := pgfs.Mount(cmd.Context(), cfg.GetPostgresURL(), fsCfg.TablePrefix, cfg.Podman.DataDir, mountPoint)
+		mountErr := pgfs.Mount(cmd.Context(), cfg.GetPostgresURL(), fsCfg.TablePrefix, cfg.Podman.DataDir, mountPoint, onMounted)
 		if rmErr := pgfs.RemoveMountState(mountPoint); rmErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: removing mount state: %v\n", rmErr)
 		}
