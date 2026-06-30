@@ -95,7 +95,7 @@ function InstanceCard({ inst, onAction }: { inst: InstanceInfo; onAction: () => 
         </button>
         <button
           disabled={busy || !inst.mountPath}
-          onClick={() => wrap(() => UmountInstance(mountPoint))}
+          onClick={() => wrap(() => UmountInstance(inst.mountPath))}
           className="px-3 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Umount
