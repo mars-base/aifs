@@ -190,7 +190,11 @@ function InstanceCard({ inst, onAction, onClearErr }: { inst: InstanceInfo; onAc
   )
 }
 
-export default function Instances() {
+interface Props {
+  onNewInstance?: () => void
+}
+
+export default function Instances({ onNewInstance }: Props) {
   const [instances, setInstances] = useState<InstanceInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -264,9 +268,15 @@ export default function Instances() {
       {!loading && instances.length === 0 && !err && (
         <p className="text-slate-400 text-sm">
           No instances found.{' '}
-          <button onClick={() => OpenConfigFile()} className="underline hover:text-white">
-            Open config
-          </button>{' '}
+          {onNewInstance ? (
+            <button onClick={onNewInstance} className="underline hover:text-white">
+              + New Instance
+            </button>
+          ) : (
+            <button onClick={() => OpenConfigFile()} className="underline hover:text-white">
+              Open config
+            </button>
+          )}{' '}
           to add one.
         </p>
       )}
