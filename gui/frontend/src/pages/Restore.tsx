@@ -244,11 +244,12 @@ export default function Restore() {
       {/* Workflow hint */}
       <div className="mt-8 bg-slate-800 border border-slate-700 rounded-lg p-4 text-xs text-slate-400 space-y-1.5">
         <p className="text-slate-300 font-medium">💡 Recommended workflow</p>
-        <p>1. Restore with <span className="text-white">Pause (read-only)</span> first.</p>
-        <p>2. Go to <span className="text-white">Instances</span> → Umount then re-Mount the instance to get a fresh view.</p>
-        <p>3. Browse the mounted files to verify the data looks correct.</p>
-        <p>4. If the data is as expected, come back here and restore again with <span className="text-white">Promote (read-write)</span> to bring the instance fully online.</p>
-        <p>5. Umount and re-Mount again to get a read-write view.</p>
+        <p>1. Go to <span className="text-white">Instances</span> → Umount the instance first.</p>
+        <p>2. Restore with <span className="text-white">Pause (read-only)</span> first.</p>
+        <p>3. Go to <span className="text-white">Instances</span> → Umount then re-Mount the instance to get a fresh view.</p>
+        <p>4. Browse the mounted files to verify the data looks correct.</p>
+        <p>5. If the data is as expected, come back here and restore again with <span className="text-white">Promote (read-write)</span> to bring the instance fully online.</p>
+        <p>6. Umount and re-Mount again to get a read-write view.</p>
       </div>
       <p className="mt-3 text-xs text-slate-500">The instance will be stopped and recreated from the nearest snapshot.</p>
     </div>
