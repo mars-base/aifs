@@ -43,6 +43,7 @@ export interface CreateInstanceRequest {
 }
 
 export const CreateInstance = (req: CreateInstanceRequest): Promise<void> => call('CreateInstance', req)
+export const DestroyInstance = (name: string, cleanData: boolean): Promise<void> => call('DestroyInstance', name, cleanData)
 
 export interface ConfigStatus {
   exists: boolean
