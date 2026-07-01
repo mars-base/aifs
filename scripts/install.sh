@@ -226,6 +226,17 @@ if ! $GUI_SKIP; then
   ok "aifs-gui installed to ${INSTALL_DIR}/${GUI_BIN}"
 fi
 
+# ── macOS: re-sign adhoc binaries ─────────────────────────────────
+# GitHub Releases binaries carry an adhoc signature that macOS may reject
+# (SIGKILL). Re-signing with a local adhoc signature fixes this.
+if $IS_MACOS; then
+  step "Re-signing binaries for macOS..."
+  codesign --force --sign - "${INSTALL_DIR}/${BIN}" 2>/dev/null && ok "aifs re-signed" || warn "aifs re-sign failed (may need manual: codesign --force --sign - ${INSTALL_DIR}/${BIN})"
+  if ! $GUI_SKIP; then
+    codesign --force --sign - "${INSTALL_DIR}/${GUI_BIN}" 2>/dev/null && ok "aifs-gui re-signed" || warn "aifs-gui re-sign failed (may need manual: codesign --force --sign - ${INSTALL_DIR}/${GUI_BIN})"
+  fi
+fi
+
 # ─── Phase 2: Dependency checks & guided install ────────────────────
 
 NEEDS_POLICY_JSON=false

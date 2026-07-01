@@ -47,6 +47,13 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/mars-base/aifs/main/scripts/install.ps1 | iex
 ```
 
+> **macOS users:** If the downloaded binary is killed immediately (SIGKILL), it may be due to macOS rejecting the adhoc code signature from GitHub Releases. Re-sign it locally:
+>
+> ```bash
+> codesign --force --sign - /usr/local/bin/aifs
+> codesign --force --sign - /usr/local/bin/aifs-gui
+> ```
+
 ## Quick Start
 
 ### Linux / macOS
