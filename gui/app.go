@@ -183,9 +183,33 @@ func (a *App) StartInstance(name string) error {
 	}
 
 	// Apply performance tuning.
-	if _, err := pm.ApplyPGTuning(); err != nil {
+	needsRestart, err := pm.ApplyPGTuning()
+	if err != nil {
 		// Non-fatal: log but don't fail start.
 		fmt.Printf("  [!] pg tuning warning: %v\n", err)
+	} else if needsRestart {
+		// shared_buffers / wal_buffers changed — restart PG and wait for it
+		// to come back up before continuing.
+		fmt.Println("-> Restarting PostgreSQL to apply shared_buffers / wal_buffers changes...")
+		if err := pm.StopContainer(); err != nil {
+			fmt.Printf("  [!] stop container for restart: %v\n", err)
+		} else if err := pm.StartContainer(); err != nil {
+			fmt.Printf("  [!] start container after restart: %v\n", err)
+		} else {
+			deadline := time.Now().Add(60 * time.Second)
+			for time.Now().Before(deadline) {
+				if ok, _ := pm.PGIsReady(); ok {
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}
+
+	// Apply per-table autovacuum tuning for aifs_blob (must run after PG is
+	// fully ready — after any restart above).
+	if err := pm.ApplyBlobTableTuning(); err != nil {
+		fmt.Printf("  [!] blob table tuning warning: %v\n", err)
 	}
 
 	// Initialize PITR stanza if enabled.

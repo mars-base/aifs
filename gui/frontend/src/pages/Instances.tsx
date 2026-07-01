@@ -85,6 +85,16 @@ function InstanceCard({ inst, onAction, onClearErr }: { inst: InstanceInfo; onAc
     }
   }, [inst.mountPath, userEdited])
 
+  // When the instance transitions to running while we're still showing
+  // "Starting…", clear the busy state — the backend StartInstance call may
+  // still be running post-start setup (PITR stanza, archive config, etc.)
+  // that doesn't affect the instance's actual up/down status.
+  useEffect(() => {
+    if (inst.running && busyOp === 'start') {
+      setBusyOp(null)
+    }
+  }, [inst.running, busyOp])
+
   // Register the clear function with the parent so manual Refresh can clear err
   useEffect(() => {
     onClearErr(() => setErr(''))
@@ -147,7 +157,7 @@ function InstanceCard({ inst, onAction, onClearErr }: { inst: InstanceInfo; onAc
       {inst.running && !inst.isFormatted && (
         <div className="mb-3">
           <button
-            disabled={busyOp === 'format'}
+            disabled={busyOp === 'format' || busyOp === 'start'}
             onClick={() => wrap('format', () => FormatInstance(inst.name))}
             className="w-full px-3 py-1.5 text-xs rounded bg-yellow-700 hover:bg-yellow-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1.5"
           >

@@ -182,6 +182,12 @@ func doStart(c *config.Config) error {
 		}
 	}
 
+	// Apply per-table autovacuum tuning for aifs_blob (must run after PG is
+	// fully ready — after any restart above).
+	if err := pm.ApplyBlobTableTuning(); err != nil {
+		fmt.Printf("  [!] blob table tuning warning: %v\n", err)
+	}
+
 	// 8. Initialize pgBackRest stanza (via backup container)
 	if c.PITR.Enabled {
 		bm, err := podman.NewBackupManager(c)
