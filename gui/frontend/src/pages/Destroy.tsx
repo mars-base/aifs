@@ -74,9 +74,8 @@ export default function Destroy() {
   return (
     <div>
       <h1 className="text-xl font-semibold text-white mb-1">Destroy Instance</h1>
-      <p className="text-xs text-slate-400 mb-8">
-        Stops and removes an instance's container, then removes it from the config.
-        Reference: <code>aifs destroy</code>.
+      <p className="text-xs font-bold text-yellow-400 mb-8">
+        This will destroy the project instance and all backed up data, proceed with caution!
       </p>
 
       {instances.length === 0 ? (
