@@ -5,6 +5,7 @@ import {
   GetConfigStatus,
   InstanceInfo,
   ListInstances,
+  ShowAlert,
   ShowConfirm,
 } from '../wailsjs/go'
 
@@ -45,6 +46,22 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
 
   const handleDestroy = async () => {
     if (!destroyTarget) return
+    const target = instances.find(i => i.name === destroyTarget)
+
+    // Pre-check: refuse to destroy a running or mounted instance — the user
+    // must stop/umount it from the Instances page first, since destroying
+    // out from under a live container/mount would leave it in a broken state.
+    if (target?.running || target?.mountPath) {
+      const reasons = []
+      if (target.running) reasons.push('is still running')
+      if (target.mountPath) reasons.push(`is mounted at ${target.mountPath}`)
+      await ShowAlert(
+        'Cannot Destroy Instance',
+        `Instance "${destroyTarget}" ${reasons.join(' and ')}.\n\nGo to Instances and Umount / Stop it first, then retry.`
+      )
+      return
+    }
+
     const warning = cleanData
       ? `This will stop and remove the container for "${destroyTarget}", AND permanently delete its host data, WAL and backup stanza.\n\nThis cannot be undone.`
       : `This will stop and remove the container for "${destroyTarget}" and remove it from the config.\n\nHost data directories will be preserved.`
@@ -197,7 +214,14 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
       </div>
 
       {/* Danger zone: destroy an existing instance */}
-      {instances.length > 0 && (
+      {instances.length > 0 && (() => {
+        const target = instances.find(i => i.name === destroyTarget)
+        const blockReasons = []
+        if (target?.running) blockReasons.push('is running')
+        if (target?.mountPath) blockReasons.push(`is mounted at ${target.mountPath}`)
+        const blocked = blockReasons.length > 0
+
+        return (
         <div className="mt-10 max-w-md border border-red-900/60 rounded-lg p-4">
           <p className="text-sm font-semibold text-red-400 mb-1">Danger zone</p>
           <p className="text-xs text-slate-500 mb-4">
@@ -222,6 +246,13 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
               </select>
             </div>
 
+            {blocked && (
+              <p className="text-xs text-yellow-400 bg-yellow-900/20 border border-yellow-800/50 rounded px-3 py-2">
+                ⚠ "{destroyTarget}" {blockReasons.join(' and ')} — go to{' '}
+                <span className="text-yellow-200">Instances</span> and Umount / Stop it before destroying.
+              </p>
+            )}
+
             <label className="flex items-start gap-2 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -237,7 +268,7 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
             </label>
 
             <button
-              disabled={destroyBusy || !destroyTarget}
+              disabled={destroyBusy || !destroyTarget || blocked}
               onClick={handleDestroy}
               className="w-full px-4 py-2 text-sm rounded bg-red-900/60 hover:bg-red-800 border border-red-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
             >
@@ -253,7 +284,8 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
             )}
           </div>
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
