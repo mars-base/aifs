@@ -3,6 +3,7 @@ import { AboutInfo, GetAboutInfo } from '../wailsjs/go'
 import { BrowserOpenURL } from '../wailsjs/runtime'
 
 const REPO_URL = 'https://github.com/mars-base/aifs'
+const ISSUES_URL = 'https://github.com/mars-base/aifs/issues'
 const LICENSE = 'PolyForm Noncommercial License 1.0.0'
 
 export default function About() {
@@ -43,6 +44,16 @@ export default function About() {
             </button>
           </p>
           <p>License: <span className="text-white">{LICENSE}</span></p>
+          <p>
+            Found a bug? Please{' '}
+            <button
+              onClick={() => BrowserOpenURL(ISSUES_URL)}
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              submit an issue
+            </button>
+            .
+          </p>
         </div>
       </div>
     </div>
