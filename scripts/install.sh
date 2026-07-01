@@ -198,6 +198,34 @@ else
 fi
 ok "aifs ${TAG} installed to ${INSTALL_DIR}/${BIN}"
 
+# ── GUI binary ──────────────────────────────────────────────────
+# GUI is not built for macOS Intel (darwin-amd64) — skip download on that arch.
+GUI_ARCH="${OS}-${ARCH}"
+GUI_SKIP=false
+if [ "$GUI_ARCH" = "darwin-amd64" ]; then
+  GUI_SKIP=true
+  info "aifs-gui is not available for macOS Intel (arm64 only); skipping"
+fi
+
+if ! $GUI_SKIP; then
+  step "Downloading aifs-gui binary (${GUI_ARCH})..."
+  GUI_URL="https://github.com/${REPO}/releases/latest/download/aifs-gui-${GUI_ARCH}"
+  info "${GUI_URL}"
+  GUI_BIN="aifs-gui"
+
+  if [ "$(id -u)" -eq 0 ]; then
+    curl -fsSL "$GUI_URL" -o "${INSTALL_DIR}/${GUI_BIN}"
+    chmod +x "${INSTALL_DIR}/${GUI_BIN}"
+  elif [ -w "$INSTALL_DIR" ]; then
+    curl -fsSL "$GUI_URL" -o "${INSTALL_DIR}/${GUI_BIN}"
+    chmod +x "${INSTALL_DIR}/${GUI_BIN}"
+  else
+    sudo curl -fsSL "$GUI_URL" -o "${INSTALL_DIR}/${GUI_BIN}"
+    sudo chmod +x "${INSTALL_DIR}/${GUI_BIN}"
+  fi
+  ok "aifs-gui installed to ${INSTALL_DIR}/${GUI_BIN}"
+fi
+
 # ─── Phase 2: Dependency checks & guided install ────────────────────
 
 NEEDS_POLICY_JSON=false
@@ -441,6 +469,11 @@ echo "  aifs start -i <instance-name>"
 echo "  aifs format -i <instance-name>"
 echo "  mkdir -p ~/mnt && aifs mount -i <instance-name> ~/mnt"
 echo ""
+if ! $GUI_SKIP; then
+  echo "${BOLD}GUI:${RESET}"
+  echo "  aifs-gui"
+  echo ""
+fi
 
 if $IS_MACOS && ! has_macfuse_kext; then
   warn "macFUSE kext is not loaded yet."

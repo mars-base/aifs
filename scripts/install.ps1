@@ -80,6 +80,15 @@ if ($currentPath -notlike "*$installDir*") {
 
 Write-Ok "aifs $tag installed to $target"
 
+# --- Phase 1b: GUI binary download ---------------------------------
+
+Write-Step "Downloading aifs-gui binary..."
+$guiUrl = "https://github.com/${repo}/releases/latest/download/aifs-gui-windows-amd64.exe"
+Write-Info "  $guiUrl"
+$guiTarget = "$installDir\aifs-gui.exe"
+Invoke-WebRequest -Uri $guiUrl -OutFile $guiTarget -UseBasicParsing
+Write-Ok "aifs-gui installed to $guiTarget"
+
 # --- Phase 2: Dependency checks & guided install --------------------
 
 Write-Step "Checking Windows dependencies..."
@@ -273,6 +282,9 @@ Write-Host "  aifs config init --add <instance-name>"
 Write-Host "  aifs start -i <instance-name>"
 Write-Host "  aifs format -i <instance-name>"
 Write-Host "  aifs mount -i <instance-name> Z:"
+Write-Host ""
+Write-Host "GUI:"
+Write-Host "  aifs-gui"
 Write-Host ""
 Write-Host "Windows notes:"
 Write-Host "  - Mount to a drive letter (Z:, X:, etc.) for session-independent access."

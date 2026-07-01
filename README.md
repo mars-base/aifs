@@ -33,7 +33,7 @@ If the script reports a reboot is required, restart the machine and then **run t
 
 ### Pre-built binaries
 
-> **Tip**: Installation and upgrade use the same command — just re-run it to update to the latest version.
+> **Tip**: Installation and upgrade use the same command — just re-run it to update to the latest version. Both CLI (`aifs`) and GUI (`aifs-gui`) are installed together.
 
 Linux / macOS:
 
