@@ -24,7 +24,6 @@ export default function About() {
             <>
               <p>Version: <span className="font-mono text-white">{info.version}</span></p>
               <p>Build time: <span className="font-mono text-white">{info.buildTime}</span></p>
-              <p>Go version: <span className="font-mono text-white">{info.goVersion}</span></p>
               <p>Platform: <span className="font-mono text-white">{info.os}/{info.arch}</span></p>
             </>
           ) : (
