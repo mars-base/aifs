@@ -10,7 +10,7 @@ import {
 export default function Destroy() {
   const [instances, setInstances] = useState<InstanceInfo[]>([])
   const [destroyTarget, setDestroyTarget] = useState('')
-  const [cleanData, setCleanData] = useState(false)
+  const [cleanData, setCleanData] = useState(true)
   const [destroyBusy, setDestroyBusy] = useState(false)
   const [destroyErr, setDestroyErr] = useState('')
   const [destroySuccess, setDestroySuccess] = useState('')
@@ -62,7 +62,7 @@ export default function Destroy() {
     try {
       await DestroyInstance(destroyTarget, cleanData)
       setDestroySuccess(`Instance "${destroyTarget}" destroyed.`)
-      setCleanData(false)
+      setCleanData(true)
       refreshInstances()
     } catch (e: unknown) {
       setDestroyErr(String(e))
