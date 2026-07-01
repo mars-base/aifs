@@ -6,9 +6,10 @@ import Bench from './pages/Bench'
 import NewInstance from './pages/NewInstance'
 import Destroy from './pages/Destroy'
 import Setup from './pages/Setup'
+import About from './pages/About'
 import { GetConfigStatus } from './wailsjs/go'
 
-type Page = 'instances' | 'new-instance' | 'destroy' | 'snapshots' | 'restore' | 'bench' | 'setup'
+type Page = 'instances' | 'new-instance' | 'destroy' | 'snapshots' | 'restore' | 'bench' | 'setup' | 'about'
 
 const NAV: { id: Page; label: string }[] = [
   { id: 'setup', label: '⚙ Setup' },
@@ -33,8 +34,9 @@ export default function App() {
   }, [])
 
   const goPage = (id: Page) => {
-    // Block navigation to non-Setup pages when config is missing
-    if (!configReady && id !== 'setup') return
+    // Block navigation to non-Setup pages when config is missing.
+    // About is exempt — version/help info should always be reachable.
+    if (!configReady && id !== 'setup' && id !== 'about') return
     setPage(id)
   }
 
@@ -76,6 +78,19 @@ export default function App() {
             )
           })}
         </ul>
+
+        <div className="mt-auto px-2 pb-4 pt-2 border-t border-slate-800 no-drag">
+          <button
+            onClick={() => goPage('about')}
+            className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+              page === 'about'
+                ? 'bg-slate-700 text-white'
+                : 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
+            }`}
+          >
+            ⓘ About / Help
+          </button>
+        </div>
       </nav>
 
       {/* Main content */}
@@ -87,6 +102,7 @@ export default function App() {
         {page === 'restore' && <Restore />}
         {page === 'bench' && <Bench />}
         {page === 'setup' && <Setup onInitialized={onSetupDone} />}
+        {page === 'about' && <About />}
       </main>
     </div>
   )

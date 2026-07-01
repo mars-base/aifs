@@ -22,6 +22,14 @@ import (
 	"github.com/mars-base/aifs/internal/podman"
 )
 
+// version and buildTime are injected at build time via -ldflags, mirroring
+// cmd/aifs/main.go so the GUI reports the same version as the CLI it ships
+// alongside.
+var (
+	version   = "dev"
+	buildTime = "unknown"
+)
+
 // App is the main application struct that exposes methods to the frontend
 // via Wails bindings.
 type App struct {
@@ -691,6 +699,26 @@ func expandHome(path string) string {
 // GetConfigPath returns the path to the aifs config file.
 func (a *App) GetConfigPath() string {
 	return platform.DefaultConfigPath()
+}
+
+// AboutInfo is version/build metadata shown on the About page.
+type AboutInfo struct {
+	Version   string `json:"version"`
+	BuildTime string `json:"buildTime"`
+	GoVersion string `json:"goVersion"`
+	OS        string `json:"os"`
+	Arch      string `json:"arch"`
+}
+
+// GetAboutInfo returns version/build metadata for display in the GUI.
+func (a *App) GetAboutInfo() AboutInfo {
+	return AboutInfo{
+		Version:   version,
+		BuildTime: buildTime,
+		GoVersion: goruntime.Version(),
+		OS:        goruntime.GOOS,
+		Arch:      goruntime.GOARCH,
+	}
 }
 
 // OpenConfigFile opens the aifs config file in the system default editor.
