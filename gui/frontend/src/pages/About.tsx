@@ -4,7 +4,7 @@ import { BrowserOpenURL } from '../wailsjs/runtime'
 
 const REPO_URL = 'https://github.com/mars-base/aifs'
 const ISSUES_URL = 'https://github.com/mars-base/aifs/issues'
-const CONTACT_EMAIL = 'aifs-issue@outlook.com'
+const CONTACT_EMAIL = 'aifs_issue@yeah.net'
 const LICENSE = 'PolyForm Noncommercial License 1.0.0'
 
 export default function About() {
