@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AboutInfo, GetAboutInfo, GetConfigPath, OpenConfigFile } from '../wailsjs/go'
+import { AboutInfo, GetAboutInfo } from '../wailsjs/go'
 import { BrowserOpenURL } from '../wailsjs/runtime'
 
 const REPO_URL = 'https://github.com/mars-base/aifs'
@@ -7,11 +7,9 @@ const LICENSE = 'PolyForm Noncommercial License 1.0.0'
 
 export default function About() {
   const [info, setInfo] = useState<AboutInfo | null>(null)
-  const [configPath, setConfigPath] = useState('')
 
   useEffect(() => {
     GetAboutInfo().then(setInfo).catch(() => {/* ignore */})
-    GetConfigPath().then(setConfigPath).catch(() => {/* ignore */})
   }, [])
 
   return (
@@ -46,15 +44,7 @@ export default function About() {
             </button>
           </p>
           <p>License: <span className="text-white">{LICENSE}</span></p>
-          <p>Config file: <span className="font-mono text-white">{configPath || '…'}</span></p>
         </div>
-
-        <button
-          onClick={() => OpenConfigFile()}
-          className="px-6 py-2 text-sm rounded bg-slate-700 hover:bg-slate-600 transition-colors"
-        >
-          Open Config File
-        </button>
       </div>
     </div>
   )
