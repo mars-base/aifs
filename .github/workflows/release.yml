@@ -113,6 +113,22 @@ jobs:
             echo "WAILS_TAGS=" >> "$GITHUB_ENV"
           fi
 
+      - name: Install WinFsp (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $headers = @{ Authorization = "token ${{ secrets.GITHUB_TOKEN }}" }
+          $releases = Invoke-WebRequest https://api.github.com/repos/winfsp/winfsp/releases -Headers $headers | ConvertFrom-Json
+          $asseturi = $releases[0].assets.browser_download_url | Where-Object { $_ -match "winfsp-.*\.msi" }
+          Invoke-WebRequest -Uri $asseturi -Out winfsp.msi
+          Start-Process -NoNewWindow -Wait msiexec "/i winfsp.msi /qn INSTALLLEVEL=1000"
+
+          # internal/pgfs's Windows build (github.com/winfsp/cgofuse/fuse) compiles
+          # via cgo on Windows and needs the FUSE-compatible headers WinFsp expects
+          # under inc/fuse — the installer only ships the DLL/import libs, not these.
+          mkdir "C:\WinFsp\inc\fuse"
+          copy .\hack\winfsp_headers\* C:\WinFsp\inc\fuse\
+          go env -w CGO_CFLAGS=-IC:/WinFsp/inc/fuse
+
       - name: Install frontend dependencies
         run: cd gui/frontend && npm ci
 
