@@ -94,7 +94,7 @@ export default function Destroy() {
                 value={destroyTarget}
                 onChange={e => { setDestroyTarget(e.target.value); setDestroyErr(''); setDestroySuccess('') }}
                 disabled={destroyBusy}
-                className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-slate-400 disabled:opacity-50"
+                className="appearance-none bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm w-full text-white focus:outline-none focus:border-slate-400 disabled:opacity-50 [&>option]:bg-slate-700 [&>option]:text-white"
               >
                 {instances.map(i => (
                   <option key={i.name} value={i.name}>
