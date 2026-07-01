@@ -28,7 +28,7 @@ build-cli:
 # resolveAifsBin() can find the aifs sibling at runtime.
 build-gui:
 	@echo "  • Building GUI..."
-	@cd gui && wails build
+	@cd gui && wails build -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 	@mkdir -p $(BUILD_DIR)
 	@if [ -f gui/build/bin/aifs-gui ]; then \
 		cp gui/build/bin/aifs-gui $(BUILD_DIR)/$(BINARY_NAME)-gui; \

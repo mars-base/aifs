@@ -133,7 +133,12 @@ jobs:
         run: cd gui/frontend && npm ci
 
       - name: Build GUI
-        run: cd gui && wails build -tags "${{ env.WAILS_TAGS }}"
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          BUILD_TIME="$(date -u '+%Y-%m-%d_%H:%M:%S')"
+          cd gui && wails build -tags "${{ env.WAILS_TAGS }}" \
+            -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
 
       - name: Collect artifact (Linux/macOS)
         if: runner.os != 'Windows'
