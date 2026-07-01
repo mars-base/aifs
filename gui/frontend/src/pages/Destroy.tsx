@@ -133,6 +133,12 @@ export default function Destroy() {
               {destroyBusy ? <><span className="animate-spin inline-block">↻</span> Destroying…</> : `Destroy "${destroyTarget}"`}
             </button>
 
+            {destroyBusy && (
+              <p className="text-xs font-bold text-yellow-400">
+                Destroy operation in progress — this can take a while for large data sets. Please do not leave this page until it completes.
+              </p>
+            )}
+
             {destroyErr && <p className="text-red-400 text-xs break-words">{destroyErr}</p>}
             {destroySuccess && (
               <div className="flex items-start gap-2 bg-green-900/30 border border-green-700/50 rounded px-3 py-2 text-xs text-green-300">
