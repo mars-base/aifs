@@ -34,10 +34,17 @@ export default function App() {
       if (!s.exists) setPage('setup')
     }).catch(() => {/* ignore */})
 
-    // Check for updates in the background; non-critical, silently ignores errors.
-    GetUpdateInfo().then(info => {
-      if (info) setUpdateInfo(info)
-    }).catch(() => {/* ignore */})
+    // Poll for update info — the backend checkForUpdate() goroutine may take
+    // a few seconds (GitHub API call), so retry every second until we get a
+    // result or give up after ~12s.
+    let attempts = 0
+    const poll = setInterval(() => {
+      GetUpdateInfo().then(info => {
+        if (info) { setUpdateInfo(info); clearInterval(poll) }
+        else if (++attempts >= 12) clearInterval(poll)
+      }).catch(() => { clearInterval(poll) })
+    }, 1000)
+    return () => clearInterval(poll)
   }, [])
 
   const goPage = (id: Page) => {
