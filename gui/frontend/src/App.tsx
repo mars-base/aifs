@@ -82,11 +82,7 @@ export default function App() {
         <div className="mt-auto px-2 pb-4 pt-2 border-t border-slate-800 no-drag">
           <button
             onClick={() => goPage('about')}
-            className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-              page === 'about'
-                ? 'text-white'
-                : 'text-slate-500 hover:text-slate-300'
-            }`}
+            className="w-full text-left px-3 py-2 rounded-md text-sm transition-colors bg-[#0f1117] text-slate-500 hover:text-slate-300"
           >
             ⓘ About / Help
           </button>
