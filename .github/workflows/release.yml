@@ -73,9 +73,6 @@ jobs:
           - os: macos-latest   # GitHub provides macos-latest as arm64 (M-series)
             name: darwin-arm64
             output: aifs-gui-darwin-arm64
-          - os: macos-13       # Last Intel macOS runner
-            name: darwin-amd64
-            output: aifs-gui-darwin-amd64
           - os: windows-latest
             name: windows-amd64
             output: aifs-gui-windows-amd64.exe
@@ -182,7 +179,6 @@ jobs:
             aifs-darwin-arm64
             aifs-windows-amd64.exe
             aifs-gui-linux-amd64
-            aifs-gui-darwin-amd64
             aifs-gui-darwin-arm64
             aifs-gui-windows-amd64.exe
           generate_release_notes: true
