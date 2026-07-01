@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # ── CLI: cross-compile all platforms from a single Linux runner ──────────
+  build-cli:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,7 +21,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build all binaries
+      - name: Build all CLI binaries
         env:
           CGO_ENABLED: 0
         run: |
@@ -50,7 +51,92 @@ jobs:
           echo "→ Build complete. Artifacts:"
           ls -lh aifs-*
 
-      - name: Upload to Release
+      - name: Upload CLI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-binaries
+          path: |
+            aifs-linux-amd64
+            aifs-linux-arm64
+            aifs-darwin-amd64
+            aifs-darwin-arm64
+            aifs-windows-amd64.exe
+
+  # ── GUI: must build on each native platform ──────────────────────────────
+  build-gui:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-amd64
+            output: aifs-gui-linux-amd64
+          - os: macos-latest   # GitHub provides macos-latest as arm64 (M-series)
+            name: darwin-arm64
+            output: aifs-gui-darwin-arm64
+          - os: macos-13       # Last Intel macOS runner
+            name: darwin-amd64
+            output: aifs-gui-darwin-amd64
+          - os: windows-latest
+            name: windows-amd64
+            output: aifs-gui-windows-amd64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install Linux WebKit dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+
+      - name: Install frontend dependencies
+        run: cd gui/frontend && npm ci
+
+      - name: Build GUI
+        run: cd gui && wails build
+
+      - name: Collect artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          if [ -f gui/build/bin/aifs-gui ]; then
+            cp gui/build/bin/aifs-gui ${{ matrix.output }}
+          else
+            cp gui/build/bin/aifs-gui.app/Contents/MacOS/aifs-gui ${{ matrix.output }}
+          fi
+
+      - name: Collect artifact (Windows)
+        if: runner.os == 'Windows'
+        run: copy gui\build\bin\aifs-gui.exe ${{ matrix.output }}
+
+      - name: Upload GUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-${{ matrix.name }}
+          path: ${{ matrix.output }}
+
+  # ── Release: gather all artifacts and publish ────────────────────────────
+  release:
+    needs: [build-cli, build-gui]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -59,4 +145,8 @@ jobs:
             aifs-darwin-amd64
             aifs-darwin-arm64
             aifs-windows-amd64.exe
+            aifs-gui-linux-amd64
+            aifs-gui-darwin-amd64
+            aifs-gui-darwin-arm64
+            aifs-gui-windows-amd64.exe
           generate_release_notes: true
