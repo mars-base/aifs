@@ -52,15 +52,19 @@ export default function About() {
             </button>
           </p>
           <p>License: <span className="text-white">{LICENSE}</span></p>
+          <p className="text-slate-300 font-medium pt-1">Found a bug or need help?</p>
           <p>
-            Found a bug? Please{' '}
+            Please{' '}
             <button
               onClick={() => BrowserOpenURL(ISSUES_URL)}
               className="text-blue-400 hover:text-blue-300 underline"
             >
               submit an issue
             </button>
-            {' '}or email{' '}
+            .
+          </p>
+          <p>
+            Or email{' '}
             <span className="font-mono text-white">{CONTACT_EMAIL}</span>
             {' '}
             <button
@@ -69,7 +73,6 @@ export default function About() {
             >
               {emailCopied ? '✓ Copied' : 'Copy'}
             </button>
-            .
           </p>
         </div>
       </div>
