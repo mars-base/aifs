@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +36,8 @@ var (
 // App is the main application struct that exposes methods to the frontend
 // via Wails bindings.
 type App struct {
-	ctx context.Context
+	ctx        context.Context
+	updateInfo *UpdateInfo // set once by background update check; nil = not checked or not available
 }
 
 // NewApp creates a new App instance.
@@ -45,6 +49,7 @@ func NewApp() *App {
 // runtime methods can use it.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	go a.checkForUpdate()
 }
 
 // InstanceInfo is the data returned to the frontend for each instance.
@@ -719,6 +724,120 @@ func (a *App) GetAboutInfo() AboutInfo {
 		OS:        goruntime.GOOS,
 		Arch:      goruntime.GOARCH,
 	}
+}
+
+// --- Update check -----------------------------------------------------------
+
+// UpdateInfo is the result of checking GitHub for a newer release.
+// nil on the App struct means the check hasn't completed or wasn't started.
+type UpdateInfo struct {
+	CurrentVersion  string `json:"currentVersion"`
+	LatestVersion   string `json:"latestVersion"`
+	ReleaseURL      string `json:"releaseUrl"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+}
+
+// ghRelease is a minimal subset of the GitHub Releases API response.
+type ghRelease struct {
+	TagName string `json:"tag_name"`
+	HTMLURL string `json:"html_url"`
+}
+
+// parseSemver extracts major.minor.patch integers from a version string like
+// "v1.2.7" or "v1.2.7-56-g778e7c5-dirty". Returns nil on parse failure.
+func parseSemver(v string) []int {
+	v = strings.TrimPrefix(v, "v")
+	if idx := strings.IndexByte(v, '-'); idx != -1 {
+		v = v[:idx]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	nums := make([]int, 3)
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil
+		}
+		nums[i] = n
+	}
+	return nums
+}
+
+// isNewer returns true when latest > current in semver terms.
+func isNewer(current, latest string) bool {
+	cv := parseSemver(current)
+	lv := parseSemver(latest)
+	if cv == nil || lv == nil {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if lv[i] > cv[i] {
+			return true
+		}
+		if lv[i] < cv[i] {
+			return false
+		}
+	}
+	return false
+}
+
+// checkForUpdate fetches the latest GitHub release and compares it against the
+// built-in version. It runs in a background goroutine from startup() and
+// silently ignores any error — this is a non-critical feature.
+func (a *App) checkForUpdate() {
+	if version == "dev" {
+		return
+	}
+	info := &UpdateInfo{CurrentVersion: version}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://api.github.com/repos/mars-base/aifs/releases/latest", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "aifs")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var rel ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return
+	}
+	if rel.TagName == "" {
+		return
+	}
+
+	info.LatestVersion = rel.TagName
+	info.ReleaseURL = rel.HTMLURL
+	info.UpdateAvailable = isNewer(version, rel.TagName)
+	a.updateInfo = info
+}
+
+// GetUpdateInfo returns the cached update check result, or nil if the check
+// hasn't completed yet or isn't applicable (e.g. dev build).
+func (a *App) GetUpdateInfo() *UpdateInfo {
+	return a.updateInfo
+}
+
+// CheckForUpdate manually runs the update check and returns the result.
+// Unlike the background goroutine in startup(), this blocks until the HTTP
+// call completes so the frontend can show immediate feedback.
+func (a *App) CheckForUpdate() *UpdateInfo {
+	a.checkForUpdate()
+	return a.updateInfo
 }
 
 // OpenConfigFile opens the aifs config file in the system default editor.

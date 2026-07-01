@@ -96,7 +96,7 @@ export default function Setup({ onInitialized }: Props) {
           <div className="bg-slate-800 border border-slate-700 rounded-lg p-4 text-xs text-slate-400 space-y-1.5">
             <p className="text-slate-300 font-medium">What happens next</p>
             <p>1. A default config file is created at the path shown above.</p>
-            <p>2. Go to <span className="text-white">New Instance</span> to add your first PostgreSQL instance.</p>
+            <p>2. Go to <span className="text-white">New Instance</span> to add your first project instance.</p>
             <p>3. Go to <span className="text-white">Instances</span> and click <span className="text-white">Start</span> to launch it.</p>
           </div>
         </div>
@@ -108,7 +108,7 @@ export default function Setup({ onInitialized }: Props) {
       )}
 
       {/* SSD tip — always visible */}
-      <p className="text-amber-400/80 text-xs">
+      <p className="text-amber-400/80 text-xs mt-6">
         💡 Strongly recommended: use a dedicated data disk (e.g. a separate SSD) as the aifs storage path for best performance and isolation.
       </p>
     </div>

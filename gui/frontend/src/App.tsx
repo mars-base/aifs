@@ -7,7 +7,8 @@ import NewInstance from './pages/NewInstance'
 import Destroy from './pages/Destroy'
 import Setup from './pages/Setup'
 import About from './pages/About'
-import { GetConfigStatus } from './wailsjs/go'
+import { GetConfigStatus, GetUpdateInfo } from './wailsjs/go'
+import type { UpdateInfo } from './wailsjs/go'
 
 type Page = 'instances' | 'new-instance' | 'destroy' | 'snapshots' | 'restore' | 'bench' | 'setup' | 'about'
 
@@ -24,12 +25,18 @@ const NAV: { id: Page; label: string }[] = [
 export default function App() {
   const [page, setPage] = useState<Page>('instances')
   const [configReady, setConfigReady] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
 
   // Auto-redirect to Setup if config file does not exist yet
   useEffect(() => {
     GetConfigStatus().then(s => {
       setConfigReady(s.exists)
       if (!s.exists) setPage('setup')
+    }).catch(() => {/* ignore */})
+
+    // Check for updates in the background; non-critical, silently ignores errors.
+    GetUpdateInfo().then(info => {
+      if (info) setUpdateInfo(info)
     }).catch(() => {/* ignore */})
   }, [])
 
@@ -86,6 +93,11 @@ export default function App() {
           >
             ⓘ About / Help
           </button>
+          {updateInfo?.updateAvailable && (
+            <p className="px-3 pt-1 text-xs text-amber-400/80">
+              ⬆ {updateInfo.latestVersion} available
+            </p>
+          )}
         </div>
       </nav>
 

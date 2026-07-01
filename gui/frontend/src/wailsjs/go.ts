@@ -82,5 +82,15 @@ export interface AboutInfo {
 }
 
 export const GetAboutInfo = (): Promise<AboutInfo> => call('GetAboutInfo')
+
+export interface UpdateInfo {
+  currentVersion: string
+  latestVersion: string
+  releaseUrl: string
+  updateAvailable: boolean
+}
+
+export const GetUpdateInfo = (): Promise<UpdateInfo> => call('GetUpdateInfo')
+export const CheckForUpdate = (): Promise<UpdateInfo> => call('CheckForUpdate')
 export const ShowConfirm = (title: string, message: string): Promise<boolean> => call('ShowConfirm', title, message)
 export const ShowAlert = (title: string, message: string): Promise<void> => call('ShowAlert', title, message)
