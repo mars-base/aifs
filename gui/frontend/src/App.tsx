@@ -4,10 +4,11 @@ import Snapshots from './pages/Snapshots'
 import Restore from './pages/Restore'
 import Bench from './pages/Bench'
 import NewInstance from './pages/NewInstance'
+import Destroy from './pages/Destroy'
 import Setup from './pages/Setup'
 import { GetConfigStatus } from './wailsjs/go'
 
-type Page = 'instances' | 'new-instance' | 'snapshots' | 'restore' | 'bench' | 'setup'
+type Page = 'instances' | 'new-instance' | 'destroy' | 'snapshots' | 'restore' | 'bench' | 'setup'
 
 const NAV: { id: Page; label: string }[] = [
   { id: 'setup', label: '⚙ Setup' },
@@ -16,6 +17,7 @@ const NAV: { id: Page; label: string }[] = [
   { id: 'snapshots', label: 'Snapshots' },
   { id: 'restore', label: 'Restore' },
   { id: 'bench', label: 'Bench' },
+  { id: 'destroy', label: 'Destroy' },
 ]
 
 export default function App() {
@@ -63,7 +65,9 @@ export default function App() {
                         ? 'bg-slate-700 text-white'
                         : n.id === 'new-instance'
                           ? 'text-blue-400 hover:bg-slate-800 hover:text-blue-300'
-                          : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                          : n.id === 'destroy'
+                            ? 'text-red-400 hover:bg-slate-800 hover:text-red-300'
+                            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
                   }`}
                 >
                   {n.label}
@@ -78,6 +82,7 @@ export default function App() {
       <main className="flex-1 overflow-auto p-6">
         {page === 'instances' && <Instances onNewInstance={() => setPage('new-instance')} />}
         {page === 'new-instance' && <NewInstance onCreated={() => setPage('instances')} onSetup={() => setPage('setup')} />}
+        {page === 'destroy' && <Destroy />}
         {page === 'snapshots' && <Snapshots />}
         {page === 'restore' && <Restore />}
         {page === 'bench' && <Bench />}
