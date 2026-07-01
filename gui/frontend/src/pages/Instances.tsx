@@ -253,12 +253,6 @@ export default function Instances({ onNewInstance }: Props) {
             <span className={refreshing ? 'animate-spin inline-block' : ''}>↻</span>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
-          <button
-            onClick={() => OpenConfigFile()}
-            className="text-xs px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 transition-colors"
-          >
-            Edit Config
-          </button>
         </div>
       </div>
 
