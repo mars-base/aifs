@@ -4,14 +4,22 @@ import { BrowserOpenURL } from '../wailsjs/runtime'
 
 const REPO_URL = 'https://github.com/mars-base/aifs'
 const ISSUES_URL = 'https://github.com/mars-base/aifs/issues'
+const CONTACT_EMAIL = 'aifs-issue@outlook.com'
 const LICENSE = 'PolyForm Noncommercial License 1.0.0'
 
 export default function About() {
   const [info, setInfo] = useState<AboutInfo | null>(null)
+  const [emailCopied, setEmailCopied] = useState(false)
 
   useEffect(() => {
     GetAboutInfo().then(setInfo).catch(() => {/* ignore */})
   }, [])
+
+  const copyEmail = async () => {
+    await navigator.clipboard.writeText(CONTACT_EMAIL)
+    setEmailCopied(true)
+    setTimeout(() => setEmailCopied(false), 2000)
+  }
 
   return (
     <div>
@@ -51,6 +59,15 @@ export default function About() {
               className="text-blue-400 hover:text-blue-300 underline"
             >
               submit an issue
+            </button>
+            {' '}or email{' '}
+            <span className="font-mono text-white">{CONTACT_EMAIL}</span>
+            {' '}
+            <button
+              onClick={copyEmail}
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              {emailCopied ? '✓ Copied' : 'Copy'}
             </button>
             .
           </p>
