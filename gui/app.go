@@ -396,6 +396,60 @@ func (a *App) FormatInstance(name string) error {
 	return err
 }
 
+// DestroyInstance stops and removes the instance's container, then removes
+// its configuration entry. Mirrors `aifs destroy` (see internal/cli/destroy.go),
+// minus the interactive confirmation prompt — the frontend must confirm via
+// ShowConfirm before calling this, since the operation is irreversible.
+//
+// When cleanData is true, host data/WAL and the instance's pgBackRest stanza
+// in the shared backup repo are also permanently removed.
+func (a *App) DestroyInstance(name string, cleanData bool) error {
+	path := platform.DefaultConfigPath()
+	cfg, err := config.Load(path)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	if _, ok := cfg.Instances[name]; !ok {
+		return fmt.Errorf("instance %q not found in config", name)
+	}
+
+	// Merge instance config for container operations.
+	if err := cfg.SetInstance(name); err != nil {
+		return fmt.Errorf("loading instance config: %w", err)
+	}
+
+	pm, err := podman.New(cfg)
+	if err != nil {
+		return fmt.Errorf("podman: %w", err)
+	}
+
+	// 1. Destroy container (and data if requested).
+	if err := pm.DestroyWithData(cleanData); err != nil {
+		return fmt.Errorf("destroying container: %w", err)
+	}
+
+	// 2. Remove config entry.
+	delete(cfg.Instances, name)
+	if err := cfg.Save(path); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+
+	// 3. Rebuild or remove the shared backup container depending on
+	// remaining instances.
+	if cfg.PITR.Enabled {
+		if bm, err := podman.NewBackupManager(cfg); err == nil {
+			if len(cfg.Instances) == 0 {
+				_ = bm.Destroy()
+			} else if _, err := bm.EnsureSSHKey(); err == nil {
+				_ = bm.EnsureBackupInfra()
+			}
+		}
+	}
+
+	return nil
+}
+
 // --- Config setup --------------------------------------------------------
 
 // ConfigStatus describes the current state of the config file.

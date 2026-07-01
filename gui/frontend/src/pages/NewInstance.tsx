@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react'
-import { CreateInstance, GetConfigStatus } from '../wailsjs/go'
+import {
+  CreateInstance,
+  DestroyInstance,
+  GetConfigStatus,
+  InstanceInfo,
+  ListInstances,
+  ShowConfirm,
+} from '../wailsjs/go'
 
 interface Props {
   onCreated: () => void
@@ -15,9 +22,49 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
   const [success, setSuccess] = useState('')
   const [configExists, setConfigExists] = useState<boolean | null>(null)
 
+  // Danger zone: destroy an existing instance
+  const [instances, setInstances] = useState<InstanceInfo[]>([])
+  const [destroyTarget, setDestroyTarget] = useState('')
+  const [cleanData, setCleanData] = useState(false)
+  const [destroyBusy, setDestroyBusy] = useState(false)
+  const [destroyErr, setDestroyErr] = useState('')
+  const [destroySuccess, setDestroySuccess] = useState('')
+
+  const refreshInstances = () => {
+    ListInstances().then(list => {
+      const sorted = (list ?? []).slice().sort((a, b) => a.name.localeCompare(b.name))
+      setInstances(sorted)
+      setDestroyTarget(prev => (sorted.some(i => i.name === prev) ? prev : sorted[0]?.name ?? ''))
+    }).catch(() => setInstances([]))
+  }
+
   useEffect(() => {
     GetConfigStatus().then(s => setConfigExists(s.exists)).catch(() => setConfigExists(false))
+    refreshInstances()
   }, [])
+
+  const handleDestroy = async () => {
+    if (!destroyTarget) return
+    const warning = cleanData
+      ? `This will stop and remove the container for "${destroyTarget}", AND permanently delete its host data, WAL and backup stanza.\n\nThis cannot be undone.`
+      : `This will stop and remove the container for "${destroyTarget}" and remove it from the config.\n\nHost data directories will be preserved.`
+    const ok = await ShowConfirm('Destroy Instance', warning)
+    if (!ok) return
+
+    setDestroyBusy(true)
+    setDestroyErr('')
+    setDestroySuccess('')
+    try {
+      await DestroyInstance(destroyTarget, cleanData)
+      setDestroySuccess(`Instance "${destroyTarget}" destroyed.`)
+      setCleanData(false)
+      refreshInstances()
+    } catch (e: unknown) {
+      setDestroyErr(String(e))
+    } finally {
+      setDestroyBusy(false)
+    }
+  }
 
   const nameErr = (() => {
     if (!name) return ''
@@ -148,6 +195,65 @@ export default function NewInstance({ onCreated, onSetup }: Props) {
         <p>2. Go to <span className="text-white">Instances</span> and click <span className="text-white">Start</span> to initialise and launch the PostgreSQL container.</p>
         <p>3. After first start, go to <span className="text-white">Snapshots</span> and create a <span className="text-white">full backup</span> to enable PITR.</p>
       </div>
+
+      {/* Danger zone: destroy an existing instance */}
+      {instances.length > 0 && (
+        <div className="mt-10 max-w-md border border-red-900/60 rounded-lg p-4">
+          <p className="text-sm font-semibold text-red-400 mb-1">Danger zone</p>
+          <p className="text-xs text-slate-500 mb-4">
+            Stops and removes the instance's container, then removes it from the config.
+            Reference: <code>aifs destroy</code>.
+          </p>
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Instance</label>
+              <select
+                value={destroyTarget}
+                onChange={e => { setDestroyTarget(e.target.value); setDestroyErr(''); setDestroySuccess('') }}
+                disabled={destroyBusy}
+                className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm w-full focus:outline-none focus:border-slate-400 disabled:opacity-50"
+              >
+                {instances.map(i => (
+                  <option key={i.name} value={i.name}>
+                    {i.name}{i.running ? ' (running)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={cleanData}
+                onChange={e => setCleanData(e.target.checked)}
+                disabled={destroyBusy}
+                className="mt-0.5"
+              />
+              <span className="text-xs text-slate-400">
+                Also delete host data, WAL and backup stanza{' '}
+                <span className="text-red-400">(irreversible)</span>
+              </span>
+            </label>
+
+            <button
+              disabled={destroyBusy || !destroyTarget}
+              onClick={handleDestroy}
+              className="w-full px-4 py-2 text-sm rounded bg-red-900/60 hover:bg-red-800 border border-red-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+            >
+              {destroyBusy ? <><span className="animate-spin inline-block">↻</span> Destroying…</> : `Destroy "${destroyTarget}"`}
+            </button>
+
+            {destroyErr && <p className="text-red-400 text-xs break-words">{destroyErr}</p>}
+            {destroySuccess && (
+              <div className="flex items-start gap-2 bg-green-900/30 border border-green-700/50 rounded px-3 py-2 text-xs text-green-300">
+                <span>✓</span>
+                <span>{destroySuccess}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
