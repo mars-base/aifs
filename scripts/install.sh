@@ -375,6 +375,40 @@ elif $IS_LINUX; then
       warn "'aifs umount' will not work without fusermount3/fusermount"
     fi
   fi
+
+  # --- GUI runtime libraries (WebKit2GTK + GTK3) ---
+  # Required to run the aifs-gui binary on Linux.
+  # (To build from source you additionally need the -dev/-devel counterparts.)
+  DISTRO="$(detect_linux_distro)"
+  case "$DISTRO" in
+    debian)      GUI_PKGS="libgtk-3-0 libwebkit2gtk-4.0-37" ;;
+    fedora|rhel) GUI_PKGS="gtk3 webkit2gtk4.0" ;;
+    arch)        GUI_PKGS="gtk3 webkit2gtk" ;;
+    suse)        GUI_PKGS="libgtk-3-0 libwebkit2gtk-4_0-37" ;;
+    alpine)      GUI_PKGS="" ;;  # webkit2gtk not in Alpine main repos
+    *)           GUI_PKGS="libgtk-3-0 libwebkit2gtk-4.0-37" ;;
+  esac
+  if [ -n "$GUI_PKGS" ]; then
+    # Check if webkit2gtk is already available (proxy for both libs being present).
+    _webkit_ok=false
+    case "$DISTRO" in
+      debian) ldconfig -p 2>/dev/null | grep -q libwebkit2gtk && _webkit_ok=true ;;
+      *)      command -v pkg-config >/dev/null 2>&1 && pkg-config --exists webkit2gtk-4.0 2>/dev/null && _webkit_ok=true ;;
+    esac
+    if $_webkit_ok; then
+      ok "GUI runtime libraries (GTK3 + WebKit2GTK) found"
+    else
+      warn "GUI runtime libraries not found — installing..."
+      # shellcheck disable=SC2086
+      if install_pkgs $GUI_PKGS; then
+        ok "GUI runtime libraries installed ($GUI_PKGS)"
+      else
+        warn "Could not auto-install GUI libraries"
+        cmd_hint "Install manually: $GUI_PKGS"
+        warn "aifs-gui will not run without GTK3 and WebKit2GTK"
+      fi
+    fi
+  fi
 fi
 
 # ─── Phase 3: Pull container images ────────────────────────────────
