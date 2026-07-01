@@ -84,8 +84,8 @@ export default function App() {
             onClick={() => goPage('about')}
             className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
               page === 'about'
-                ? 'bg-slate-700 text-white'
-                : 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
+                ? 'text-white'
+                : 'text-slate-500 hover:text-slate-300'
             }`}
           >
             ⓘ About / Help
