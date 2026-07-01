@@ -4,6 +4,17 @@ Aifs is a database file system designed for AI-Agent and various needs to preven
 
 In the AI Agent era, agents autonomously read, write, and modify files at scale — a single misstep can destroy hours of work. aifs makes every change traceable and reversible. Powered by PostgreSQL PITR (Point-In-Time Recovery), it turns the filesystem into a time machine: rewind to any moment, recover deleted files, undo mistakes, and let agents work fearlessly knowing nothing is ever truly lost.
 
+🍎 macOS &nbsp;&nbsp; 🐧 Linux &nbsp;&nbsp; 🪟 Windows
+
+aifs provides both CLI and GUI on all supported platforms. The GUI offers a simple, user-friendly experience for daily use (instance management, snapshots, PITR restore), while the CLI provides advanced functionality for power users and automation.
+
+| Platform | GUI Support |
+|----------|-------------|
+| macOS (Apple Silicon) | ✅ |
+| macOS (Intel) | ❌ |
+| Linux (amd64) | ✅ |
+| Windows (amd64) | ✅ |
+
 ## Prerequisites
 
 - **Linux**: podman runs natively, no VM required. On Debian/Ubuntu, enable unprivileged user namespaces for rootless containers:
